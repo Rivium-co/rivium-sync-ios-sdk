@@ -1,0 +1,50 @@
+name: RiviumSyncExample
+options:
+  bundleIdPrefix: co.rivium.sync
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+packages:
+  RiviumSync:
+    path: "../../ios/RiviumSync"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+  configs:
+    Debug:
+      DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+    Release:
+      DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+
+targets:
+  RiviumSyncExample:
+    type: application
+    platform: iOS
+    sources:
+      - path: RiviumSyncExample
+    settings:
+      base:
+        INFOPLIST_FILE: RiviumSyncExample/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: co.rivium.sync.example
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+    dependencies:
+      - package: RiviumSync
+        product: RiviumSync
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
+      commandLineArguments: {}
+      environmentVariables: {}

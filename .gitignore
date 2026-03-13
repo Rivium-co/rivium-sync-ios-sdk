@@ -1,0 +1,16 @@
+# Build outputs
+.build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+
+# SPM
+.swiftpm/
+
+# OS
+.DS_Store
+
+# CocoaPods
+Pods/
+
+# Claude Code
+.claude/
