@@ -4,6 +4,7 @@ Realtime database SDK for iOS with offline-first sync powered by pn-protocol.
 
 [![Swift 5.7+](https://img.shields.io/badge/Swift-5.7+-orange.svg)](https://swift.org)
 [![Platforms](https://img.shields.io/badge/Platforms-iOS%2013+%20|%20macOS%2012+-blue.svg)](https://developer.apple.com)
+[![CocoaPods](https://img.shields.io/cocoapods/v/RiviumSync.svg)](https://cocoapods.org/pods/RiviumSync)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Installation
@@ -33,6 +34,20 @@ Then add `"RiviumSync"` to your target's dependencies:
     name: "YourApp",
     dependencies: ["RiviumSync"]
 )
+```
+
+### CocoaPods
+
+Add to your `Podfile`:
+
+```ruby
+pod 'RiviumSync', '~> 0.1'
+```
+
+Then run:
+
+```bash
+pod install
 ```
 
 ## Documentation
