@@ -16,14 +16,14 @@ Realtime database SDK for iOS with offline-first sync powered by pn-protocol.
    ```
    https://github.com/Rivium-co/rivium-sync-ios-sdk
    ```
-3. Select version **0.1.0**
+3. Select version **0.2.0**
 4. Add **RiviumSync** library to your target
 
 ### Swift Package Manager (Package.swift)
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Rivium-co/rivium-sync-ios-sdk", from: "0.1.0"),
+    .package(url: "https://github.com/Rivium-co/rivium-sync-ios-sdk", from: "0.2.0"),
 ]
 ```
 
@@ -41,7 +41,7 @@ Then add `"RiviumSync"` to your target's dependencies:
 Add to your `Podfile`:
 
 ```ruby
-pod 'RiviumSync', '~> 0.1'
+pod 'RiviumSync', '~> 0.2'
 ```
 
 Then run:
@@ -49,6 +49,26 @@ Then run:
 ```bash
 pod install
 ```
+
+## Verified user identity
+
+Security Rules check `auth.uid`. The API key ships inside your app, so the app
+cannot be trusted to say who the user is - only your own server can. Have your
+backend mint a short-lived user token and give the SDK a provider:
+
+```swift
+let sync = RiviumSync.initialize(config: RiviumSyncConfigBuilder(apiKey: "rv_live_your_api_key").build())
+sync.userTokens.provider = {
+    try await MyBackend.fetchSyncToken()
+}
+```
+
+The SDK asks for a token when it needs one and again before the old one
+expires. Your backend mints it with your project's server secret, which must
+stay on your server and never ship in an app.
+
+If your project has **Require signed user tokens** turned on in the Console, a
+token is required; without it, requests are refused.
 
 ## Documentation
 

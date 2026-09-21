@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/emqx/CocoaMQTT.git",
       "state" : {
-        "revision" : "7ad043c42b91944958bc81f8694eba1fde55ff0d",
-        "version" : "2.2.3"
+        "revision" : "4c5a9a68eac0a4eab74ba504981e5a839d7e7593",
+        "version" : "2.4.1"
       }
     },
     {
@@ -16,6 +16,15 @@
       "state" : {
         "revision" : "ce3e18607fd01079495f86ff6195d8a3ca469f73",
         "version" : "1.0.8"
+      }
+    },
+    {
+      "identity" : "pn-protocol-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Rivium-co/pn-protocol-ios.git",
+      "state" : {
+        "revision" : "82647236e347ce9c10cd026e59ed8e82a55d1722",
+        "version" : "0.2.1"
       }
     },
     {

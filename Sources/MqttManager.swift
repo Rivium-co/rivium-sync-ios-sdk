@@ -6,6 +6,8 @@ import PNProtocol
 internal class MqttManager {
     private let config: RiviumSyncConfig
     private let apiClient: ApiClient
+    /// Project the API key belongs to, learned from POST /connections/token.
+    private var projectId: String?
     /// Maps topic -> [handleId -> callback]
     private var subscriptions: [String: [UUID: (String) -> Void]] = [:]
     private let subscriptionsQueue = DispatchQueue(label: "co.rivium.subscriptions")
@@ -24,6 +26,16 @@ internal class MqttManager {
 
     /// Hold a reference to the PNSocket
     private var socket: PNSocket?
+
+    // The socket's own autoReconnect only covers a socket that exists. If the
+    // token request fails (e.g. the app started offline) there is no socket yet,
+    // so without this the SDK stayed "connecting" forever after the network
+    // came back. These drive a retry of the whole connect, token included.
+    private var wantConnected = false
+    private var tokenRetryAttempt = 0
+    private var tokenRetryTask: Task<Void, Never>?
+    private static let tokenRetryBaseSeconds: Double = 2
+    private static let tokenRetryMaxSeconds: Double = 30
 
     /// Strong references to listeners (PNSocket stores them as weak refs)
     private var connectionHandler: ConnectionHandler?
@@ -55,18 +67,54 @@ internal class MqttManager {
             return
         }
 
+        wantConnected = true
+        cancelTokenRetry()
+        tokenRetryAttempt = 0
+        connectInternal(completion: completion)
+    }
+
+    private func connectInternal(completion: @escaping (Result<Void, Error>) -> Void) {
         // Fetch token from API first
         Task {
             do {
                 RiviumSyncLogger.d("Fetching MQTT token...")
                 let tokenResponse = try await apiClient.fetchMqttToken()
+                tokenRetryAttempt = 0
+                projectId = tokenResponse.projectId
                 RiviumSyncLogger.d("MQTT token obtained")
                 self.connectWithToken(token: tokenResponse.token, completion: completion)
             } catch {
                 RiviumSyncLogger.e("Failed to fetch MQTT token", error: error)
-                completion(.failure(error))
+                if tokenRetryAttempt == 0 {
+                    // Report once per failure streak. `connect() async` wraps this
+                    // completion in a continuation, which must never resume twice,
+                    // so retries below pass a no-op instead.
+                    completion(.failure(error))
+                    onConnectionStateChanged?(false)
+                }
+                scheduleTokenRetry()
             }
         }
+    }
+
+    private func scheduleTokenRetry() {
+        guard config.autoReconnect, wantConnected else { return }
+        let delay = min(
+            Self.tokenRetryBaseSeconds * pow(2, Double(min(tokenRetryAttempt, 4))),
+            Self.tokenRetryMaxSeconds
+        )
+        tokenRetryAttempt += 1
+        RiviumSyncLogger.i("Connect failed; retrying in \(delay)s (attempt \(tokenRetryAttempt))")
+        tokenRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self = self, !Task.isCancelled, self.wantConnected else { return }
+            self.connectInternal(completion: { _ in })
+        }
+    }
+
+    private func cancelTokenRetry() {
+        tokenRetryTask?.cancel()
+        tokenRetryTask = nil
     }
 
     private func connectWithToken(token: String, completion: @escaping (Result<Void, Error>) -> Void) {
@@ -108,6 +156,10 @@ internal class MqttManager {
 
     func disconnect() {
         RiviumSyncLogger.i("MqttManager.disconnect() called")
+        // A pending retry must not bring the connection back after the app
+        // asked for it to close.
+        wantConnected = false
+        cancelTokenRetry()
         subscriptionsQueue.sync {
             subscriptions.removeAll()
         }
@@ -203,12 +255,19 @@ internal class MqttManager {
         }
     }
 
+    /// Topic for collection changes.
+    ///
+    /// `rivium_sync/{projectId}/{databaseName}/{collectionName}/changes` - the
+    /// names the app uses, under the project id from POST /connections/token, so
+    /// the same database name in two projects cannot collide. The broker grants
+    /// a client only its own `rivium_sync/{projectId}/#`.
     func collectionTopic(databaseId: String, collectionId: String) -> String {
-        return "rivium_sync/\(databaseId)/\(collectionId)/changes"
+        return "rivium_sync/\(projectId ?? "unknown")/\(databaseId)/\(collectionId)/changes"
     }
 
+    /// Topic for one document's changes.
     func documentTopic(databaseId: String, collectionId: String, documentId: String) -> String {
-        return "rivium_sync/\(databaseId)/\(collectionId)/\(documentId)"
+        return "rivium_sync/\(projectId ?? "unknown")/\(databaseId)/\(collectionId)/\(documentId)"
     }
 
     class SubscriptionHandle {

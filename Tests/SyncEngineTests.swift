@@ -401,4 +401,33 @@ final class SyncEngineTests: XCTestCase {
             "completed:1"
         ])
     }
+
+    // MARK: - Known offline (reads at launch)
+
+    private func makeEngine() throws -> SyncEngine {
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_test").build()
+        return SyncEngine(apiClient: ApiClient(config: config), localStore: LocalStorageManager())
+    }
+
+    /// isOnline starts false, so reads that trusted it served the local cache at
+    /// every launch - an empty list on a fresh install, rows deleted elsewhere
+    /// after that. Before the first connection report we do not know we are
+    /// offline, and reads must still try the server.
+    func testNotKnownOfflineBeforeFirstConnectionReport() throws {
+        let engine = try makeEngine()
+        XCTAssertFalse(engine.isOnline)
+        XCTAssertFalse(engine.isKnownOffline)
+    }
+
+    func testKnownOfflineOnceAConnectionAttemptReportsOffline() throws {
+        let engine = try makeEngine()
+        engine.onConnectionStateChanged(connected: false)
+        XCTAssertTrue(engine.isKnownOffline)
+    }
+
+    func testNotKnownOfflineWhileConnected() throws {
+        let engine = try makeEngine()
+        engine.onConnectionStateChanged(connected: true)
+        XCTAssertFalse(engine.isKnownOffline)
+    }
 }

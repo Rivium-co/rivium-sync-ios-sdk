@@ -174,11 +174,11 @@ final class ApiClientTests: XCTestCase {
         var headers: [String: String] = [:]
 
         headers["Content-Type"] = "application/json"
-        headers["x-api-key"] = "nl_test_abc123"
+        headers["x-api-key"] = "rv_live_abc123"
         headers["Authorization"] = "Bearer jwt-token"
 
         XCTAssertEqual(headers["Content-Type"], "application/json")
-        XCTAssertEqual(headers["x-api-key"], "nl_test_abc123")
+        XCTAssertEqual(headers["x-api-key"], "rv_live_abc123")
         XCTAssertEqual(headers["Authorization"], "Bearer jwt-token")
     }
 

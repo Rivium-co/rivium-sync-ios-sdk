@@ -104,7 +104,9 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func getWithOfflineSupport(documentId: String) async throws -> SyncDocument? {
-        let isOnline = syncEngine?.isOnline ?? true
+        // Ask the server unless we know we are offline; a failure still falls
+        // back to the cache below.
+        let isOnline = syncEngine?.isKnownOffline != true
 
         // Check local cache first
         let cached = localStorageManager?.getDocument(documentId: documentId)
@@ -145,18 +147,26 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func getAllWithOfflineSupport() async throws -> [SyncDocument] {
-        let isOnline = syncEngine?.isOnline ?? true
+        // Ask the server unless we know we are offline; a failure still falls
+        // back to the cache below.
+        let isOnline = syncEngine?.isKnownOffline != true
 
         if isOnline {
             do {
-                let docs = try await apiClient.getAllDocuments(databaseId: databaseId, collectionId: id)
-                // Update cache
-                localStorageManager?.saveDocuments(
-                    documents: docs,
-                    databaseId: databaseId,
-                    collectionId: id,
-                    syncStatus: .synced
-                )
+                let snapshot = try await apiClient.fetchCollection(databaseId: databaseId, collectionId: id)
+                let docs = snapshot.documents
+                if snapshot.complete {
+                    // Also drops documents deleted on the server since last time.
+                    localStorageManager?.replaceSyncedDocuments(documents: docs, databaseId: databaseId, collectionId: id)
+                } else {
+                    // Could not confirm we saw everything: add and update only.
+                    localStorageManager?.saveDocuments(
+                        documents: docs,
+                        databaseId: databaseId,
+                        collectionId: id,
+                        syncStatus: .synced
+                    )
+                }
                 return docs
             } catch {
                 RiviumSyncLogger.w("Failed to get documents online, using cached: \(error)")

@@ -8,6 +8,9 @@ internal class ApiClient {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    /// Signed identity, when the app supplies one.
+    internal let userTokens = UserTokenStore()
+
     init(config: RiviumSyncConfig, userId: String? = nil) {
         self.config = config
         self.userId = userId
@@ -17,7 +20,7 @@ internal class ApiClient {
         self.session = URLSession(configuration: configuration)
     }
     
-    private func buildRequest(endpoint: String, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
+    private func buildRequest(endpoint: String, method: String = "GET", body: [String: Any]? = nil) async throws -> URLRequest {
         guard let url = URL(string: "\(config.apiUrl)\(endpoint)") else {
             throw RiviumSyncError.invalidResponse("Invalid URL")
         }
@@ -26,7 +29,12 @@ internal class ApiClient {
         request.httpMethod = method
         request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let userId = userId {
+
+        // A signed token decides who the caller is; the plain userId header is
+        // only a fallback, and a project with requireSignedTokens refuses it.
+        if let token = await userTokens.current() {
+            request.setValue(token, forHTTPHeaderField: "X-User-Token")
+        } else if let userId = userId {
             request.setValue(userId, forHTTPHeaderField: "X-User-Id")
         }
 
@@ -37,7 +45,7 @@ internal class ApiClient {
         return request
     }
     
-    private func executeRequest<T: Decodable>(_ request: URLRequest) async throws -> T {
+    private func executeRequest<T: Decodable>(_ request: URLRequest, retryOnExpiredToken: Bool = true) async throws -> T {
         RiviumSyncLogger.d("ApiClient: \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "unknown")")
 
         let (data, response) = try await session.data(for: request)
@@ -47,15 +55,34 @@ internal class ApiClient {
             throw RiviumSyncError.invalidResponse("Invalid response type")
         }
 
+        // An expired token is transient: get a fresh one and try once more, so
+        // the caller never sees it.
+        if httpResponse.statusCode == 401,
+           retryOnExpiredToken,
+           request.value(forHTTPHeaderField: "X-User-Token") != nil,
+           let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           body["code"] as? String == "token_expired" {
+            RiviumSyncLogger.d("ApiClient: user token expired - refreshing and retrying once")
+            userTokens.invalidate()
+            if let refreshed = await userTokens.current() {
+                var retried = request
+                retried.setValue(refreshed, forHTTPHeaderField: "X-User-Token")
+                return try await executeRequest(retried, retryOnExpiredToken: false)
+            }
+        }
+
         RiviumSyncLogger.d("ApiClient: Response status \(httpResponse.statusCode)")
 
+        // Never log bodies: they carry user tokens, the realtime token and the
+        // app's own data, and debug logs end up in bug reports and crash tools.
         guard (200...299).contains(httpResponse.statusCode) else {
-            let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
-            RiviumSyncLogger.e("ApiClient: Error response body: \(responseBody)", error: nil)
             if let errorDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let message = errorDict["message"] as? String ?? errorDict["error"] as? String ?? "Request failed"
+                // The server's short error message only.
+                RiviumSyncLogger.e("ApiClient: Request failed (\(httpResponse.statusCode)): \(message.prefix(200))", error: nil)
                 throw RiviumSyncError.networkError(message, nil)
             }
+            RiviumSyncLogger.e("ApiClient: Request failed (\(httpResponse.statusCode)), \(data.count) bytes", error: nil)
             throw RiviumSyncError.networkError("Request failed with status \(httpResponse.statusCode)", nil)
         }
 
@@ -63,8 +90,7 @@ internal class ApiClient {
             let result = try decoder.decode(T.self, from: data)
             return result
         } catch {
-            let responseBody = String(data: data, encoding: .utf8) ?? "Unable to decode"
-            RiviumSyncLogger.e("ApiClient: Failed to decode response: \(responseBody)", error: error)
+            RiviumSyncLogger.e("ApiClient: Failed to decode a \(data.count)-byte response", error: error)
             throw error
         }
     }
@@ -73,20 +99,20 @@ internal class ApiClient {
 
     /// Fetch a short-lived JWT token for MQTT authentication.
     func fetchMqttToken() async throws -> MqttTokenResponse {
-        let request = try buildRequest(endpoint: "/connections/token", method: "POST")
+        let request = try await buildRequest(endpoint: "/connections/token", method: "POST")
         return try await executeRequest(request)
     }
 
     // MARK: - Database Operations
 
     func listDatabases() async throws -> [DatabaseInfo] {
-        let request = try buildRequest(endpoint: "/databases")
+        let request = try await buildRequest(endpoint: "/databases")
         let response: ApiResponse<[DatabaseInfo]> = try await executeRequest(request)
         return response.data ?? []
     }
 
     func createDatabase(name: String) async throws -> DatabaseInfo {
-        let request = try buildRequest(endpoint: "/databases", method: "POST", body: ["name": name])
+        let request = try await buildRequest(endpoint: "/databases", method: "POST", body: ["name": name])
         let response: ApiResponse<DatabaseInfo> = try await executeRequest(request)
         guard let data = response.data else {
             throw RiviumSyncError.databaseError("Failed to create database")
@@ -95,20 +121,20 @@ internal class ApiClient {
     }
 
     func deleteDatabase(databaseId: String) async throws {
-        let request = try buildRequest(endpoint: "/databases/\(databaseId)", method: "DELETE")
+        let request = try await buildRequest(endpoint: "/databases/\(databaseId)", method: "DELETE")
         let _: ApiResponse<EmptyData> = try await executeRequest(request)
     }
 
     // MARK: - Collection Operations
     
     func listCollections(databaseId: String) async throws -> [CollectionInfo] {
-        let request = try buildRequest(endpoint: "/databases/\(databaseId)/collections")
+        let request = try await buildRequest(endpoint: "/databases/\(databaseId)/collections")
         let response: ApiResponse<[CollectionInfo]> = try await executeRequest(request)
         return response.data ?? []
     }
     
     func createCollection(databaseId: String, name: String) async throws -> CollectionInfo {
-        let request = try buildRequest(endpoint: "/databases/\(databaseId)/collections", method: "POST", body: ["name": name])
+        let request = try await buildRequest(endpoint: "/databases/\(databaseId)/collections", method: "POST", body: ["name": name])
         let response: ApiResponse<CollectionInfo> = try await executeRequest(request)
         guard let data = response.data else {
             throw RiviumSyncError.collectionError("Failed to create collection")
@@ -117,14 +143,14 @@ internal class ApiClient {
     }
     
     func deleteCollection(collectionId: String) async throws {
-        let request = try buildRequest(endpoint: "/collections/\(collectionId)", method: "DELETE")
+        let request = try await buildRequest(endpoint: "/collections/\(collectionId)", method: "DELETE")
         let _: ApiResponse<EmptyData> = try await executeRequest(request)
     }
     
     // MARK: - Document Operations
     
     func addDocument(databaseId: String, collectionId: String, data: [String: Any]) async throws -> SyncDocument {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk",
             method: "POST",
             body: ["data": data]
@@ -137,7 +163,7 @@ internal class ApiClient {
     }
     
     func getDocument(databaseId: String, collectionId: String, documentId: String) async throws -> SyncDocument? {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk/\(documentId)"
         )
         do {
@@ -149,15 +175,51 @@ internal class ApiClient {
     }
     
     func getAllDocuments(databaseId: String, collectionId: String) async throws -> [SyncDocument] {
-        let request = try buildRequest(
-            endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk"
+        try await fetchCollection(databaseId: databaseId, collectionId: collectionId).documents
+    }
+
+    /// Every document in a collection, across as many pages as it takes. The
+    /// server answers 100 at a time unless asked otherwise, and this used to make
+    /// one request - so getAll() quietly stopped at the first 100.
+    func fetchCollection(databaseId: String, collectionId: String) async throws -> CollectionSnapshot {
+        var documents: [SyncDocument] = []
+        var total: Int?
+        while true {
+            let (page, pageTotal) = try await fetchPage(
+                databaseId: databaseId, collectionId: collectionId,
+                skip: documents.count, limit: Self.pageSize
+            )
+            documents += page
+            total = pageTotal
+            // Stop on a short or empty page, or once we have everything.
+            if page.count < Self.pageSize { break }
+            guard let total = total, documents.count < total else { break }
+        }
+        RiviumSyncLogger.d("getAllDocuments fetched \(documents.count) of \(total.map(String.init) ?? "?")")
+        let complete = total.map { documents.count >= $0 } ?? false
+        return CollectionSnapshot(documents: documents, complete: complete)
+    }
+
+    static let pageSize = 100
+
+    /// One page of a collection plus the server's total. Separate so the paging
+    /// loop above can be tested without a network.
+    func fetchPage(
+        databaseId: String,
+        collectionId: String,
+        skip: Int,
+        limit: Int
+    ) async throws -> (documents: [SyncDocument], total: Int?) {
+        let request = try await buildRequest(
+            endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk" +
+                "?skip=\(skip)&limit=\(limit)"
         )
         let response: ListResponse<DocumentResponse> = try await executeRequest(request)
-        return response.data.map { $0.toSyncDocument() }
+        return (response.data.map { $0.toSyncDocument() }, response.total)
     }
     
     func updateDocument(databaseId: String, collectionId: String, documentId: String, data: [String: Any]) async throws -> SyncDocument {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk/\(documentId)",
             method: "PATCH",
             body: ["data": data]
@@ -170,7 +232,7 @@ internal class ApiClient {
     }
     
     func setDocument(databaseId: String, collectionId: String, documentId: String, data: [String: Any]) async throws -> SyncDocument {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk/\(documentId)",
             method: "PUT",
             body: ["data": data]
@@ -183,7 +245,7 @@ internal class ApiClient {
     }
     
     func deleteDocument(databaseId: String, collectionId: String, documentId: String) async throws {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk/\(documentId)",
             method: "DELETE"
         )
@@ -191,7 +253,7 @@ internal class ApiClient {
     }
     
     func queryDocuments(databaseId: String, collectionId: String, query: QueryParams) async throws -> [SyncDocument] {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/databases/\(databaseId)/collections/\(collectionId)/documents/sdk/query",
             method: "POST",
             body: query.toDict()
@@ -204,7 +266,7 @@ internal class ApiClient {
 
     /// Execute a batch of operations atomically
     func executeBatch(operations: [[String: Any]]) async throws {
-        let request = try buildRequest(
+        let request = try await buildRequest(
             endpoint: "/batch/sdk",
             method: "POST",
             body: ["operations": operations]
@@ -233,9 +295,19 @@ private struct ListResponse<T: Decodable>: Decodable {
 private struct EmptyData: Decodable {}
 
 /// MQTT token response from /connections/token
+/// A whole collection as read from the server. `complete` is true only when the
+/// pages added up to the server's own total, which is what makes it safe to drop
+/// cached rows that were not returned.
+internal struct CollectionSnapshot {
+    let documents: [SyncDocument]
+    let complete: Bool
+}
+
 internal struct MqttTokenResponse: Decodable {
     let token: String
     let expiresIn: String?
+    /// Project the API key belongs to; realtime topics are namespaced by it.
+    let projectId: String?
     let mqtt: MqttConnectionInfo?
 }
 

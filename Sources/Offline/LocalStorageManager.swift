@@ -93,6 +93,53 @@ public class LocalStorageManager {
         RiviumSyncLogger.d("LocalStorage: Saved \(documents.count) documents")
     }
 
+    /// Make the cache match a complete read of a collection from the server.
+    ///
+    /// `saveDocuments` only adds and updates, so a document deleted on the server
+    /// stayed in the cache for good and came back every time the app was offline.
+    /// Pass only a COMPLETE snapshot here: anything the server did not return is
+    /// dropped. Documents with local changes not yet synced are never touched,
+    /// and it all happens under `cacheLock`, which every write takes, so a write
+    /// cannot slip in between deciding what is stale and removing it.
+    public func replaceSyncedDocuments(
+        documents: [SyncDocument],
+        databaseId: String,
+        collectionId: String
+    ) {
+        let onServer = Set(documents.map { $0.id })
+        var stale: [String] = []
+
+        cacheLock.lock()
+        for doc in documents {
+            let cached = CachedDocument.fromSyncDocument(
+                doc,
+                databaseId: databaseId,
+                collectionId: collectionId,
+                syncStatus: .synced
+            )
+            documentCache[doc.id] = cached
+            persistDocument(cached)
+        }
+        for (id, cached) in documentCache
+        where cached.databaseId == databaseId
+            && cached.collectionId == collectionId
+            && cached.syncStatus == .synced
+            && !onServer.contains(id) {
+            stale.append(id)
+        }
+        for id in stale {
+            documentCache.removeValue(forKey: id)
+            try? fileManager.removeItem(at: documentsDirectory.appendingPathComponent("\(id).json"))
+        }
+        cacheLock.unlock()
+
+        notifyCollectionChange(databaseId: databaseId, collectionId: collectionId)
+        updatePendingCount()
+        if !stale.isEmpty {
+            RiviumSyncLogger.d("LocalStorage: Dropped \(stale.count) documents deleted on the server")
+        }
+    }
+
     /// Get a document from local cache
     public func getDocument(documentId: String) -> SyncDocument? {
         cacheLock.lock()

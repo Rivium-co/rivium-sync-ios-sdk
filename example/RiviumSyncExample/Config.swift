@@ -2,14 +2,13 @@ import Foundation
 
 /// Configuration for the RiviumSync Example App
 ///
-/// Copy this file to Config.swift and replace the values with your own
-/// API key and database ID from the AuthLeap dashboard.
+/// Replace these with your own API key and database ID from Rivium Console.
 enum AppConfig {
-    // Your RiviumSync Project API Key (get from AuthLeap dashboard > Projects)
-    static let apiKey = "rv_live_64e0ada5eeb66e3adf6136337802a5a34713ce4966372854"
+    // Your project's API key (Rivium Console > your project > settings)
+    static let apiKey = "rv_live_your_api_key"
 
     // Your database ID (create in RiviumSync console)
-    static let databaseId = "test-sync"
+    static let databaseId = "your-database-id"
 
     // Demo collection name
     static let todosCollection = "todos"

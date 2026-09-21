@@ -2,11 +2,13 @@ import Foundation
 
 /// Configuration for RiviumSync SDK
 public struct RiviumSyncConfig {
-    /// Your RiviumSync API key from AuthLeap Console (rv_live_xxx or rv_test_xxx)
+    /// Your RiviumSync API key from Rivium Console (rv_live_xxx)
     public let apiKey: String
     /// Optional user/device identifier for Security Rules (used as auth.uid).
     /// If not provided, the SDK auto-generates a stable device ID.
     public let userId: String?
+    /// Signed user token, if the app already holds one at init.
+    public let userToken: String?
     public let apiUrl: String
     public let mqttHost: String
     public let mqttPort: Int
@@ -37,6 +39,7 @@ public struct RiviumSyncConfig {
     public init(
         apiKey: String,
         userId: String? = nil,
+        userToken: String? = nil,
         apiUrl: String? = nil,
         mqttHost: String? = nil,
         mqttPort: Int? = nil,
@@ -57,6 +60,7 @@ public struct RiviumSyncConfig {
 
         self.apiKey = apiKey
         self.userId = userId
+        self.userToken = userToken
         self.apiUrl = apiUrl ?? Self.defaultApiUrl
         self.mqttHost = mqttHost ?? Self.defaultMqttHost
         self.mqttPort = mqttPort ?? Self.defaultMqttPort
@@ -82,9 +86,10 @@ public struct RiviumSyncConfig {
 
 /// Builder for RiviumSyncConfig
 public class RiviumSyncConfigBuilder {
-    /// Your RiviumSync API key from AuthLeap Console (rv_live_xxx or rv_test_xxx)
+    /// Your RiviumSync API key from Rivium Console (rv_live_xxx)
     private let apiKey: String
     private var userId: String?
+    private var userToken: String?
     private var apiUrl: String?
     private var mqttHost: String?
     private var mqttPort: Int?
@@ -107,8 +112,22 @@ public class RiviumSyncConfigBuilder {
 
     /// Set user/device identifier for Security Rules (used as auth.uid).
     /// If not set, the SDK auto-generates a stable device ID.
+    ///
+    /// The server cannot trust this: anyone who unpacks your app can change it,
+    /// and a project that enforces `requireSignedTokens` refuses it. Prefer
+    /// `userToken(_:)` or `RiviumSync.userTokens`.
     public func userId(_ userId: String) -> Self {
         self.userId = userId
+        return self
+    }
+
+    /// A signed user token minted by YOUR backend with its server secret
+    /// (`POST /users/token`). This is what makes `auth.uid` trustworthy.
+    ///
+    /// Set `RiviumSync.userTokens.provider` instead if you want the SDK to
+    /// refresh it by itself.
+    public func userToken(_ token: String) -> Self {
+        self.userToken = token
         return self
     }
 
@@ -197,6 +216,7 @@ public class RiviumSyncConfigBuilder {
         return RiviumSyncConfig(
             apiKey: apiKey,
             userId: userId,
+            userToken: userToken,
             apiUrl: apiUrl,
             mqttHost: mqttHost,
             mqttPort: mqttPort,

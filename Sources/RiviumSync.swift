@@ -35,7 +35,7 @@ public class RiviumSync {
     public private(set) static var shared: RiviumSync!
 
     /// SDK version
-    public static let version = "1.0.0"
+    public static let version = "0.2.0"
 
     private let config: RiviumSyncConfig
     internal let apiClient: ApiClient
@@ -48,6 +48,13 @@ public class RiviumSync {
 
     /// Resolved userId for Security Rules (auth.uid)
     public let userId: String
+
+    /// The signed user token the SDK sends.
+    ///
+    /// Call `sync.userTokens.set(token)` after your app signs a user in or
+    /// refreshes their token, or set `sync.userTokens.provider` to let the SDK
+    /// fetch one whenever it needs it.
+    public var userTokens: UserTokenStore { apiClient.userTokens }
 
     /// Connection state delegate
     public weak var delegate: RiviumSyncDelegate?
@@ -63,6 +70,9 @@ public class RiviumSync {
 
         self.userId = RiviumSync.getOrCreateUserId(from: config)
         self.apiClient = ApiClient(config: config, userId: userId)
+        if let token = config.userToken {
+            self.apiClient.userTokens.set(token)
+        }
         self.mqttManager = MqttManager(config: config, apiClient: apiClient)
 
         // Initialize offline components if enabled

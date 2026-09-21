@@ -7,30 +7,30 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - Valid API Key Formats
 
     func testBuilderAcceptsValidLiveApiKey() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_live_abc123xyz789")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123xyz789")
             .build()
 
-        XCTAssertEqual(config.apiKey, "nl_live_abc123xyz789")
+        XCTAssertEqual(config.apiKey, "rv_live_abc123xyz789")
     }
 
     func testBuilderAcceptsValidTestApiKey() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123xyz789")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123xyz789")
             .build()
 
-        XCTAssertEqual(config.apiKey, "nl_test_abc123xyz789")
+        XCTAssertEqual(config.apiKey, "rv_live_abc123xyz789")
     }
 
     func testBuilderAcceptsLongApiKey() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_live_abcdefghijklmnop")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abcdefghijklmnop")
             .build()
 
-        XCTAssertEqual(config.apiKey, "nl_live_abcdefghijklmnop")
+        XCTAssertEqual(config.apiKey, "rv_live_abcdefghijklmnop")
     }
 
     // MARK: - Default Values
 
     func testBuilderSetsCorrectDefaultValues() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .build()
 
         XCTAssertFalse(config.debugMode)
@@ -46,7 +46,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - debugMode
 
     func testDebugModeCanBeEnabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .debugMode(true)
             .build()
 
@@ -54,7 +54,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testDebugModeCanBeDisabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .debugMode(true)
             .debugMode(false) // Override
             .build()
@@ -65,7 +65,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - autoReconnect
 
     func testAutoReconnectCanBeDisabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .autoReconnect(false)
             .build()
 
@@ -73,7 +73,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testAutoReconnectCanBeEnabledExplicitly() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .autoReconnect(true)
             .build()
 
@@ -83,7 +83,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - offlineEnabled
 
     func testOfflineEnabledCanBeEnabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .offlineEnabled(true)
             .build()
 
@@ -91,7 +91,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testOfflineEnabledDefaultsToFalse() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .build()
 
         XCTAssertFalse(config.offlineEnabled)
@@ -100,7 +100,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - offlineCacheSizeMb
 
     func testOfflineCacheSizeMbAcceptsValidPositiveValue() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .offlineCacheSizeMb(50)
             .build()
 
@@ -108,7 +108,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testOfflineCacheSizeMbAcceptsLargeValue() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .offlineCacheSizeMb(500)
             .build()
 
@@ -116,7 +116,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testOfflineCacheSizeMbDefaultValue() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .build()
 
         XCTAssertEqual(config.offlineCacheSizeMb, 100)
@@ -125,7 +125,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - syncOnReconnect
 
     func testSyncOnReconnectCanBeDisabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .syncOnReconnect(false)
             .build()
 
@@ -133,7 +133,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testSyncOnReconnectDefaultsToTrue() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .build()
 
         XCTAssertTrue(config.syncOnReconnect)
@@ -142,7 +142,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - conflictStrategy
 
     func testConflictStrategyServerWins() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .conflictStrategy(.serverWins)
             .build()
 
@@ -150,7 +150,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testConflictStrategyClientWins() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .conflictStrategy(.clientWins)
             .build()
 
@@ -158,7 +158,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testConflictStrategyMerge() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .conflictStrategy(.merge)
             .build()
 
@@ -166,7 +166,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testConflictStrategyManual() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .conflictStrategy(.manual)
             .build()
 
@@ -174,7 +174,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testConflictStrategyDefaultsToServerWins() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .build()
 
         XCTAssertEqual(config.conflictStrategy, .serverWins)
@@ -183,7 +183,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - maxSyncRetries
 
     func testMaxSyncRetriesAcceptsPositiveValue() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .maxSyncRetries(5)
             .build()
 
@@ -191,7 +191,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testMaxSyncRetriesDefaultValue() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .build()
 
         XCTAssertEqual(config.maxSyncRetries, 3)
@@ -200,7 +200,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - Custom URLs
 
     func testApiUrlCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .apiUrl("https://custom.api.com")
             .build()
 
@@ -208,7 +208,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testMqttHostCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .mqttHost("custom.mqtt.com")
             .build()
 
@@ -216,7 +216,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testMqttPortCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .mqttPort(1883)
             .build()
 
@@ -224,7 +224,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testMqttUseTlsCanBeDisabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .mqttUseTls(false)
             .build()
 
@@ -234,7 +234,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - Connection Settings
 
     func testConnectionTimeoutCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .connectionTimeout(60)
             .build()
 
@@ -242,7 +242,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testKeepAliveIntervalCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .keepAliveInterval(120)
             .build()
 
@@ -250,7 +250,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testReconnectIntervalCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .reconnectInterval(10.0)
             .build()
 
@@ -260,7 +260,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - Builder Method Chaining
 
     func testBuilderMethodChaining() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .debugMode(true)
             .autoReconnect(false)
             .offlineEnabled(true)
@@ -271,7 +271,7 @@ final class RiviumSyncConfigTests: XCTestCase {
             .connectionTimeout(45)
             .build()
 
-        XCTAssertEqual(config.apiKey, "nl_test_abc123")
+        XCTAssertEqual(config.apiKey, "rv_live_abc123")
         XCTAssertTrue(config.debugMode)
         XCTAssertFalse(config.autoReconnect)
         XCTAssertTrue(config.offlineEnabled)
@@ -286,7 +286,7 @@ final class RiviumSyncConfigTests: XCTestCase {
 
     func testDirectInitWithAllParameters() {
         let config = RiviumSyncConfig(
-            apiKey: "nl_live_xyz789",
+            apiKey: "rv_live_xyz789",
             apiUrl: "https://api.example.com",
             mqttHost: "mqtt.example.com",
             mqttPort: 8883,
@@ -304,7 +304,7 @@ final class RiviumSyncConfigTests: XCTestCase {
             maxSyncRetries: 7
         )
 
-        XCTAssertEqual(config.apiKey, "nl_live_xyz789")
+        XCTAssertEqual(config.apiKey, "rv_live_xyz789")
         XCTAssertEqual(config.apiUrl, "https://api.example.com")
         XCTAssertEqual(config.mqttHost, "mqtt.example.com")
         XCTAssertEqual(config.mqttPort, 8883)
@@ -324,7 +324,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     // MARK: - mqttServerUri
 
     func testMqttServerUriWithTls() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .mqttHost("mqtt.example.com")
             .mqttPort(8883)
             .mqttUseTls(true)
@@ -334,7 +334,7 @@ final class RiviumSyncConfigTests: XCTestCase {
     }
 
     func testMqttServerUriWithoutTls() {
-        let config = RiviumSyncConfigBuilder(apiKey: "nl_test_abc123")
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
             .mqttHost("mqtt.example.com")
             .mqttPort(1883)
             .mqttUseTls(false)

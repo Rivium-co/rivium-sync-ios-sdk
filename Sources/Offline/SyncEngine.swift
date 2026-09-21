@@ -15,6 +15,18 @@ public class SyncEngine {
     @Published public private(set) var isOnline: Bool = false
     @Published public private(set) var pendingCount: Int = 0
 
+    /// Set once the first connection attempt has reported, either way.
+    private var connectionStateKnown = false
+
+    /// True only when a connection attempt has actually reported that we are
+    /// offline. `isOnline` starts false, so before the first report it cannot
+    /// tell "not connected yet" from "offline" - and reads that trusted it
+    /// served the local cache at every app launch, including rows deleted
+    /// elsewhere since. Reads should try the network unless this is true.
+    public var isKnownOffline: Bool {
+        connectionStateKnown && !isOnline
+    }
+
     private var syncTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     private var syncListeners: [SyncListener] = []
@@ -64,6 +76,7 @@ public class SyncEngine {
 
     /// Called when connection state changes
     public func onConnectionStateChanged(connected: Bool) {
+        connectionStateKnown = true
         isOnline = connected
         RiviumSyncLogger.i("SyncEngine: Connection state changed to \(connected)")
 
