@@ -21,8 +21,12 @@ public enum OrderDirection: String {
 
 /// Protocol for RiviumSync collection operations
 public protocol SyncCollection {
+    /// How this collection is addressed in API paths and realtime topics. For a
+    /// reference from `SyncDatabase.collection(_:)` this is the collection name you passed.
     var id: String { get }
     var name: String { get }
+    /// How the parent database is addressed; the database name for a reference
+    /// from `RiviumSync.database(_:)`.
     var databaseId: String { get }
     
     // CRUD operations

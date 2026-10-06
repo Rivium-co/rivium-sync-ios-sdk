@@ -76,14 +76,18 @@ internal class ApiClient {
         // Never log bodies: they carry user tokens, the realtime token and the
         // app's own data, and debug logs end up in bug reports and crash tools.
         guard (200...299).contains(httpResponse.statusCode) else {
+            // Marks "sign the user in first" so realtime can wait for a token
+            // instead of retrying; the error the caller sees is unchanged.
+            let cause: Error? = Self.isUserTokenRequired(status: httpResponse.statusCode, body: data)
+                ? UserTokenRequiredError() : nil
             if let errorDict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let message = errorDict["message"] as? String ?? errorDict["error"] as? String ?? "Request failed"
                 // The server's short error message only.
                 RiviumSyncLogger.e("ApiClient: Request failed (\(httpResponse.statusCode)): \(message.prefix(200))", error: nil)
-                throw RiviumSyncError.networkError(message, nil)
+                throw RiviumSyncError.networkError(message, cause)
             }
             RiviumSyncLogger.e("ApiClient: Request failed (\(httpResponse.statusCode)), \(data.count) bytes", error: nil)
-            throw RiviumSyncError.networkError("Request failed with status \(httpResponse.statusCode)", nil)
+            throw RiviumSyncError.networkError("Request failed with status \(httpResponse.statusCode)", cause)
         }
 
         do {
@@ -95,6 +99,12 @@ internal class ApiClient {
         }
     }
     
+    /// True for the answer a project with "Require signed user tokens" gives a
+    /// request that carried no token.
+    static func isUserTokenRequired(status: Int, body: Data) -> Bool {
+        return status == 401 && (String(data: body, encoding: .utf8)?.contains("token_required") ?? false)
+    }
+
     // MARK: - MQTT Token
 
     /// Fetch a short-lived JWT token for MQTT authentication.
@@ -293,6 +303,10 @@ private struct ListResponse<T: Decodable>: Decodable {
 }
 
 private struct EmptyData: Decodable {}
+
+/// The project requires a signed user token and the request carried none.
+/// Not a network failure: nothing changes until the app supplies a token.
+internal struct UserTokenRequiredError: Error {}
 
 /// MQTT token response from /connections/token
 /// A whole collection as read from the server. `complete` is true only when the

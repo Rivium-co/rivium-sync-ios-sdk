@@ -5,7 +5,7 @@ struct BatchView: View {
     @State private var resultText = ""
     @State private var isRunning = false
 
-    private let collection = RiviumSync.shared.database(AppConfig.databaseId).collection(AppConfig.todosCollection)
+    private let collection = RiviumSync.shared.database(AppConfig.databaseName).collection(AppConfig.todosCollection)
 
     var body: some View {
         NavigationView {

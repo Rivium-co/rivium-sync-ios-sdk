@@ -1,8 +1,8 @@
 Pod::Spec.new do |s|
   s.name             = 'RiviumSync'
-  s.version          = '0.2.0'
+  s.version          = '0.2.1'
   s.summary          = 'Realtime database SDK for iOS with offline-first sync'
-  s.description      = 'Realtime database SDK for iOS with offline-first sync powered by pn-protocol'
+  s.description      = 'Realtime database SDK for iOS with offline-first sync'
   s.homepage         = 'https://rivium.co'
   s.license          = { :type => 'MIT' }
   s.author           = { 'Rivium' => 'support@rivium.co' }

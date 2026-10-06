@@ -5,7 +5,7 @@ struct OfflineView: View {
     @ObservedObject var connectionManager: ConnectionManager
     @State private var resultText = ""
 
-    private let collection = RiviumSync.shared.database(AppConfig.databaseId).collection(AppConfig.todosCollection)
+    private let collection = RiviumSync.shared.database(AppConfig.databaseName).collection(AppConfig.todosCollection)
 
     var syncStateColor: Color {
         switch connectionManager.syncState {

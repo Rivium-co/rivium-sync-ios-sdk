@@ -21,19 +21,44 @@ public final class UserTokenStore {
     /// Fetches a token for the signed-in user. Return nil to send none.
     public var provider: (() async throws -> String?)?
 
+    /// Told when the app changes who is signed in, so realtime can follow.
+    internal var onUserMayHaveChanged: (() -> Void)?
+
     internal init() {}
 
     /// Replace the current token. Safe to call from any thread.
+    ///
+    /// If the SDK was waiting for a token to connect, it connects now; if it is
+    /// connected as a different user, it reconnects as this one.
     public func set(_ newToken: String?) {
+        store(newToken)
+        onUserMayHaveChanged?()
+    }
+
+    /// For apps that use a `provider`: call this when the user signs in or out.
+    /// The SDK asks the provider again and connects, or reconnects, as that user.
+    public func refreshUserToken() {
+        invalidate()
+        onUserMayHaveChanged?()
+    }
+
+    /// Forget the current token so the next request asks `provider` for another.
+    public func invalidate() {
+        store(nil)
+    }
+
+    private func store(_ newToken: String?) {
         lock.lock()
         defer { lock.unlock() }
         token = newToken
         expiresAt = newToken.map(Self.expiry(of:)) ?? 0
     }
 
-    /// Forget the current token so the next request asks `provider` for another.
-    public func invalidate() {
-        set(nil)
+    /// The user the held token is for, without asking `provider`.
+    internal func heldUser() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return Self.user(of: token)
     }
 
     /// The token to send, refreshing through `provider` when needed.
@@ -48,7 +73,7 @@ public final class UserTokenStore {
 
         do {
             if let fetched = try await provider() {
-                set(fetched)
+                store(fetched)
                 return fetched
             }
             return held
@@ -60,18 +85,23 @@ public final class UserTokenStore {
 
     /// Expiry from the JWT payload, or 0 when it cannot be read.
     private static func expiry(of jwt: String) -> TimeInterval {
+        return payload(of: jwt)?["exp"] as? TimeInterval ?? 0
+    }
+
+    /// The user a token is for (its `sub`), or nil without one.
+    internal static func user(of jwt: String?) -> String? {
+        return jwt.flatMap(payload(of:))?["sub"] as? String
+    }
+
+    private static func payload(of jwt: String) -> [String: Any]? {
         let parts = jwt.split(separator: ".")
-        guard parts.count > 1 else { return 0 }
+        guard parts.count > 1 else { return nil }
 
         var base64 = String(parts[1]).replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
         while base64.count % 4 != 0 { base64 += "=" }
 
-        guard let data = Data(base64Encoded: base64),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let exp = json["exp"] as? TimeInterval
-        else { return 0 }
-
-        return exp
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 }

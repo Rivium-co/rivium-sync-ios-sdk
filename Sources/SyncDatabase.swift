@@ -2,11 +2,17 @@ import Foundation
 
 /// Protocol for RiviumSync database operations
 public protocol SyncDatabase {
+    /// How this database is addressed in API paths and realtime topics. For a
+    /// reference from `RiviumSync.database(_:)` this is the database name you passed.
     var id: String { get }
     var name: String { get }
     
-    /// Get a collection reference by ID or name
-    func collection(_ collectionIdOrName: String) -> SyncCollection
+    /// Get a collection reference by name.
+    ///
+    /// - Parameter name: The collection NAME exactly as shown in Rivium Console
+    ///   (for example `"todos"`), not its UUID. Realtime updates are published on
+    ///   topics that use the name, so `listen` callbacks only fire when you pass the name.
+    func collection(_ name: String) -> SyncCollection
     
     /// List all collections in this database
     func listCollections() async throws -> [CollectionInfo]
@@ -14,7 +20,10 @@ public protocol SyncDatabase {
     /// Create a new collection in this database
     func createCollection(name: String) async throws -> SyncCollection
     
-    /// Delete a collection
+    /// Delete a collection.
+    ///
+    /// - Parameter collectionId: The collection's `id` as returned by `listCollections()`.
+    ///   Unlike `collection(_:)`, this call takes the id, not the name.
     func deleteCollection(collectionId: String) async throws
 }
 
@@ -43,10 +52,10 @@ internal class SyncDatabaseImpl: SyncDatabase {
         self.syncEngine = syncEngine
     }
 
-    func collection(_ collectionIdOrName: String) -> SyncCollection {
+    func collection(_ name: String) -> SyncCollection {
         return SyncCollectionImpl(
-            id: collectionIdOrName,
-            name: collectionIdOrName,
+            id: name,
+            name: name,
             databaseId: id,
             apiClient: apiClient,
             mqttManager: mqttManager,
@@ -61,8 +70,10 @@ internal class SyncDatabaseImpl: SyncDatabase {
 
     func createCollection(name: String) async throws -> SyncCollection {
         let info = try await apiClient.createCollection(databaseId: id, name: name)
+        // Keyed by name, like collection(_:): realtime topics carry names, so a
+        // UUID-keyed collection would never receive live updates.
         return SyncCollectionImpl(
-            id: info.id,
+            id: info.name,
             name: info.name,
             databaseId: id,
             apiClient: apiClient,

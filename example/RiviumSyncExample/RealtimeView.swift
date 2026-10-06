@@ -7,7 +7,7 @@ struct RealtimeView: View {
     @State private var resultText = ""
     @State private var previousDocs: [SyncDocument] = []
 
-    private let collection = RiviumSync.shared.database(AppConfig.databaseId).collection(AppConfig.todosCollection)
+    private let collection = RiviumSync.shared.database(AppConfig.databaseName).collection(AppConfig.todosCollection)
 
     struct EventLog: Identifiable {
         let id = UUID()

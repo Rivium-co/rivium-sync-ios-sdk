@@ -19,7 +19,7 @@ import UIKit
 /// try await RiviumSync.shared.connect()
 ///
 /// // Get database and collection
-/// let db = RiviumSync.shared.database("my-database-id")
+/// let db = RiviumSync.shared.database("my-app")
 /// let todos = db.collection("todos")
 ///
 /// // CRUD operations
@@ -35,7 +35,7 @@ public class RiviumSync {
     public private(set) static var shared: RiviumSync!
 
     /// SDK version
-    public static let version = "0.2.0"
+    public static let version = "0.2.1"
 
     private let config: RiviumSyncConfig
     internal let apiClient: ApiClient
@@ -55,6 +55,19 @@ public class RiviumSync {
     /// refreshes their token, or set `sync.userTokens.provider` to let the SDK
     /// fetch one whenever it needs it.
     public var userTokens: UserTokenStore { apiClient.userTokens }
+
+    /// True while the SDK waits for a user token before it can connect.
+    ///
+    /// A project with "Require signed user tokens" refuses a realtime
+    /// connection without one. `connect()` still returns normally; the SDK
+    /// connects by itself once `userTokens.set(_:)` or `refreshUserToken()`
+    /// supplies a token.
+    public var isAwaitingUserToken: Bool {
+        return mqttManager.isAwaitingUserToken
+    }
+
+    /// Called once each time the SDK starts waiting for a user token.
+    public var onAwaitingUserToken: (() -> Void)?
 
     /// Connection state delegate
     public weak var delegate: RiviumSyncDelegate?
@@ -108,6 +121,13 @@ public class RiviumSync {
                 self.delegate?.riviumSync(self, didDisconnectWithError: nil)
             }
         }
+        // Not a failure, so the delegate hears nothing; only the sync engine
+        // has to know it is offline for now.
+        mqttManager.onAwaitingUserToken = { [weak self] in
+            guard let self = self else { return }
+            self.syncEngine?.onConnectionStateChanged(connected: false)
+            self.onAwaitingUserToken?()
+        }
     }
     
     /// Initialize the SDK with configuration
@@ -149,15 +169,31 @@ public class RiviumSync {
         RiviumSyncLogger.i("RiviumSync disconnected")
     }
     
+    /// For apps that use `userTokens.provider`: call this when the user signs
+    /// in or out. The SDK asks the provider again and connects, or reconnects,
+    /// as that user.
+    public func refreshUserToken() {
+        userTokens.refreshUserToken()
+    }
+
     /// Check if connected to realtime service
     public var isConnected: Bool {
         return mqttManager.isConnected
     }
     
-    /// Get a database reference by ID
-    public func database(_ databaseId: String) -> SyncDatabase {
+    /// Get a database reference by name.
+    ///
+    /// - Parameter name: The database NAME exactly as shown in Rivium Console
+    ///   (for example `"my-app"`), not its UUID. REST calls resolve the name inside
+    ///   your API key's project, and realtime updates are published on topics that
+    ///   use the name, so `listen` callbacks only fire when you pass the name.
+    ///
+    /// ```swift
+    /// let todos = RiviumSync.shared.database("my-app").collection("todos")
+    /// ```
+    public func database(_ name: String) -> SyncDatabase {
         return SyncDatabaseImpl(
-            id: databaseId,
+            id: name,
             name: "",
             apiClient: apiClient,
             mqttManager: mqttManager,
@@ -197,7 +233,11 @@ public class RiviumSync {
         return try await apiClient.createDatabase(name: name)
     }
 
-    /// Delete a database
+    /// Delete a database.
+    ///
+    /// - Parameter databaseId: The database's `id` as returned by `listDatabases()`
+    ///   or `createDatabase(name:)`. Unlike `database(_:)`, this call takes the id,
+    ///   not the name.
     public func deleteDatabase(databaseId: String) async throws {
         try await apiClient.deleteDatabase(databaseId: databaseId)
     }

@@ -8,7 +8,7 @@ struct CrudView: View {
     @State private var resultText = ""
     @State private var isLoading = false
 
-    private let collection = RiviumSync.shared.database(AppConfig.databaseId).collection(AppConfig.todosCollection)
+    private let collection = RiviumSync.shared.database(AppConfig.databaseName).collection(AppConfig.todosCollection)
 
     var body: some View {
         NavigationView {

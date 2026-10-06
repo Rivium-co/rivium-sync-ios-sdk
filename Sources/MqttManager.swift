@@ -37,6 +37,20 @@ internal class MqttManager {
     private static let tokenRetryBaseSeconds: Double = 2
     private static let tokenRetryMaxSeconds: Double = 30
 
+    // The project requires a signed user token and the app has none yet (no
+    // one is signed in). That is not a failure and retrying cannot fix it: the
+    // connect is parked here until the app supplies a token.
+    private var awaitingUserToken = false
+    // The user the socket was authorised as, to notice a different one.
+    private var socketUser: String?
+    // A realtime-token request is in flight / a socket was opened with its answer.
+    private var fetchingToken = false
+    private var socketOpened = false
+    // Bumped by every connect attempt and by disconnect, so an answer that
+    // arrives after something newer replaced it is dropped.
+    private var attempt = 0
+    private let stateLock = NSLock()
+
     /// Strong references to listeners (PNSocket stores them as weak refs)
     private var connectionHandler: ConnectionHandler?
     private var errorHandler: ErrorHandler?
@@ -45,6 +59,13 @@ internal class MqttManager {
 
     /// Callback for connection state changes
     var onConnectionStateChanged: ((Bool) -> Void)?
+
+    /// Connect is parked until the app supplies a user token.
+    var onAwaitingUserToken: (() -> Void)?
+
+    var isAwaitingUserToken: Bool {
+        return locked { awaitingUserToken }
+    }
 
     protocol MqttManagerDelegate: AnyObject {
         func mqttManagerDidConnect(_ manager: MqttManager)
@@ -55,6 +76,15 @@ internal class MqttManager {
     init(config: RiviumSyncConfig, apiClient: ApiClient) {
         self.config = config
         self.apiClient = apiClient
+        apiClient.userTokens.onUserMayHaveChanged = { [weak self] in
+            self?.userMayHaveChanged()
+        }
+    }
+
+    private func locked<T>(_ body: () -> T) -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return body()
     }
 
     var isConnected: Bool {
@@ -74,16 +104,64 @@ internal class MqttManager {
     }
 
     private func connectInternal(completion: @escaping (Result<Void, Error>) -> Void) {
+        let mine: Int = locked {
+            attempt += 1
+            fetchingToken = true
+            socketUser = apiClient.userTokens.heldUser()
+            return attempt
+        }
         // Fetch token from API first
         Task {
             do {
                 RiviumSyncLogger.d("Fetching MQTT token...")
                 let tokenResponse = try await apiClient.fetchMqttToken()
+                let user = UserTokenStore.user(of: await apiClient.userTokens.current())
+                let current: Bool = locked {
+                    guard attempt == mine else { return false }
+                    fetchingToken = false
+                    socketOpened = true
+                    awaitingUserToken = false
+                    socketUser = user
+                    return true
+                }
+                guard current else {
+                    completion(replacedResult())
+                    return
+                }
                 tokenRetryAttempt = 0
                 projectId = tokenResponse.projectId
+                rekeyUnknownTopics()
                 RiviumSyncLogger.d("MQTT token obtained")
                 self.connectWithToken(token: tokenResponse.token, completion: completion)
             } catch {
+                let current: Bool = locked {
+                    guard attempt == mine else { return false }
+                    fetchingToken = false
+                    return true
+                }
+                guard current else {
+                    completion(replacedResult())
+                    return
+                }
+                if Self.isUserTokenRequired(error) {
+                    // Nobody is signed in yet. Wait for the app's token instead
+                    // of retrying; connect() itself has not failed. The
+                    // completion is the caller's on a first attempt and a no-op
+                    // on every later one, so it is resumed exactly once.
+                    tokenRetryAttempt = 0
+                    let entered: Bool = locked {
+                        let was = awaitingUserToken
+                        awaitingUserToken = true
+                        return !was
+                    }
+                    if entered {
+                        RiviumSyncLogger.i("This project requires a user token; realtime connects when one is set")
+                        onAwaitingUserToken?()
+                    }
+                    completion(.success(()))
+                    return
+                }
+                locked { awaitingUserToken = false }
                 RiviumSyncLogger.e("Failed to fetch MQTT token", error: error)
                 if tokenRetryAttempt == 0 {
                     // Report once per failure streak. `connect() async` wraps this
@@ -94,6 +172,62 @@ internal class MqttManager {
                 }
                 scheduleTokenRetry()
             }
+        }
+    }
+
+    /// What to tell a caller whose attempt was replaced before it finished: a
+    /// newer attempt is establishing the connection, unless the app disconnected.
+    private func replacedResult() -> Result<Void, Error> {
+        if wantConnected { return .success(()) }
+        return .failure(RiviumSyncError.connectionError("Disconnected before the connection was established", nil))
+    }
+
+    /// True when the realtime-token request was refused because the project
+    /// requires a signed user token and none was sent.
+    static func isUserTokenRequired(_ error: Error) -> Bool {
+        if case RiviumSyncError.networkError(_, let cause) = error {
+            return cause is UserTokenRequiredError
+        }
+        return false
+    }
+
+    /// The app set, cleared or refreshed its user token. Connect if that is what
+    /// the SDK was waiting for; reconnect if the socket belongs to another user.
+    /// A new token for the same user changes nothing here.
+    func userMayHaveChanged() {
+        guard wantConnected else { return }
+        Task {
+            let token = await apiClient.userTokens.current()
+            let user = UserTokenStore.user(of: token)
+            guard wantConnected else { return }
+
+            // 1 = connect, 2 = reconnect
+            let step: Int = locked {
+                if awaitingUserToken {
+                    guard token != nil else { return 0 }
+                    awaitingUserToken = false
+                    return 1
+                }
+                guard socketOpened || fetchingToken, user != socketUser else { return 0 }
+                socketOpened = false
+                return 2
+            }
+            guard step != 0 else { return }
+
+            cancelTokenRetry()
+            tokenRetryAttempt = 0
+            if step == 1 {
+                RiviumSyncLogger.i("User token available; connecting")
+            } else {
+                RiviumSyncLogger.i("Signed-in user changed; reconnecting")
+                // Keep `subscriptions`: they are subscribed again on connect.
+                socket?.close()
+                socket = nil
+                hasSubscribedOnce = false
+                pnListeners.removeAll()
+            }
+            // No-op completion: the caller's connect() was answered long ago.
+            connectInternal(completion: { _ in })
         }
     }
 
@@ -117,7 +251,9 @@ internal class MqttManager {
         tokenRetryTask = nil
     }
 
-    private func connectWithToken(token: String, completion: @escaping (Result<Void, Error>) -> Void) {
+    /// Opens the socket. Separate so the token handling above can be tested
+    /// without a broker.
+    func connectWithToken(token: String, completion: @escaping (Result<Void, Error>) -> Void) {
         RiviumSyncLogger.d("Connecting to \(config.mqttHost):\(config.mqttPort) (TLS: \(config.mqttUseTls))")
 
         // Close any existing socket to prevent orphaned connections
@@ -160,6 +296,13 @@ internal class MqttManager {
         // asked for it to close.
         wantConnected = false
         cancelTokenRetry()
+        locked {
+            attempt += 1
+            fetchingToken = false
+            socketOpened = false
+            awaitingUserToken = false
+            socketUser = nil
+        }
         subscriptionsQueue.sync {
             subscriptions.removeAll()
         }
@@ -170,6 +313,7 @@ internal class MqttManager {
     }
 
     func subscribe(topic: String, callback: @escaping (String) -> Void) -> SubscriptionHandle {
+        let topic = resolvedTopic(topic)
         let handle = SubscriptionHandle(topic: topic, callback: callback, manager: self)
         RiviumSyncLogger.i("MqttManager.subscribe called for topic: \(topic), handleId: \(handle.id), isConnected: \(isConnected)")
 
@@ -192,23 +336,25 @@ internal class MqttManager {
 
     func unsubscribe(handle: SubscriptionHandle) {
         RiviumSyncLogger.i("MqttManager.unsubscribe called for topic: \(handle.topic), handleId: \(handle.id)")
+        // The handle may predate the project id; its subscription has moved since.
+        let topic = resolvedTopic(handle.topic)
         subscriptionsQueue.sync {
-            if var callbacks = subscriptions[handle.topic] {
+            if var callbacks = subscriptions[topic] {
                 RiviumSyncLogger.i("MqttManager.unsubscribe: Found \(callbacks.count) callbacks for topic")
                 callbacks.removeValue(forKey: handle.id)
                 if callbacks.isEmpty {
-                    subscriptions.removeValue(forKey: handle.topic)
-                    pnListeners.removeValue(forKey: handle.topic)
+                    subscriptions.removeValue(forKey: topic)
+                    pnListeners.removeValue(forKey: topic)
                     if isConnected {
-                        socket?.detach(handle.topic)
-                        RiviumSyncLogger.d("Detached from channel: \(handle.topic)")
+                        socket?.detach(topic)
+                        RiviumSyncLogger.d("Detached from channel: \(topic)")
                     }
                 } else {
-                    subscriptions[handle.topic] = callbacks
+                    subscriptions[topic] = callbacks
                     RiviumSyncLogger.i("MqttManager.unsubscribe: Still \(callbacks.count) callbacks remaining")
                 }
             } else {
-                RiviumSyncLogger.i("MqttManager.unsubscribe: No callbacks found for topic \(handle.topic)")
+                RiviumSyncLogger.i("MqttManager.unsubscribe: No callbacks found for topic \(topic)")
             }
         }
     }
@@ -227,31 +373,64 @@ internal class MqttManager {
             RiviumSyncLogger.d("Message received on \(message.channel)")
 
             self.delegate?.mqttManager(self, didReceiveMessage: payload, topic: message.channel)
-
-            self.subscriptionsQueue.sync {
-                let callbackCount = self.subscriptions[message.channel]?.count ?? 0
-                RiviumSyncLogger.i("MqttManager.didReceiveMessage: topic=\(message.channel), callbackCount=\(callbackCount)")
-                if callbackCount == 0 {
-                    RiviumSyncLogger.w("MqttManager.didReceiveMessage: No callbacks for topic! Available topics: \(Array(self.subscriptions.keys))")
-                }
-                self.subscriptions[message.channel]?.values.forEach { callback in
-                    RiviumSyncLogger.i("MqttManager.didReceiveMessage: Invoking callback for topic \(message.channel)")
-                    callback(payload)
-                }
-            }
+            self.deliver(payload, topic: message.channel)
         }
 
         pnListeners[topic] = listener
         socket?.stream(topic, mode: .reliable, listener: listener)
     }
 
+    /// Hand a message to every callback registered for its topic.
+    func deliver(_ payload: String, topic: String) {
+        subscriptionsQueue.sync {
+            let callbackCount = subscriptions[topic]?.count ?? 0
+            RiviumSyncLogger.i("MqttManager.didReceiveMessage: topic=\(topic), callbackCount=\(callbackCount)")
+            if callbackCount == 0 {
+                RiviumSyncLogger.w("MqttManager.didReceiveMessage: No callbacks for topic! Available topics: \(Array(subscriptions.keys))")
+            }
+            subscriptions[topic]?.values.forEach { callback in
+                RiviumSyncLogger.i("MqttManager.didReceiveMessage: Invoking callback for topic \(topic)")
+                callback(payload)
+            }
+        }
+    }
+
+    /// Every topic the app is listening to, connected or not.
+    var subscribedTopics: [String] {
+        return subscriptionsQueue.sync { Array(subscriptions.keys) }
+    }
+
     /// Subscribe all pending topics (topics registered before connection was established).
     /// Called only once on first connect. On reconnect, PNSocket handles resubscription automatically.
     fileprivate func subscribePendingTopics() {
-        let topics: [String] = subscriptionsQueue.sync { Array(subscriptions.keys) }
+        let topics = subscribedTopics
         RiviumSyncLogger.i("subscribePendingTopics: \(topics.count) pending topics: \(topics)")
         for topic in topics {
             subscribeViaPNProtocol(topic: topic)
+        }
+    }
+
+    // A listener added before the first realtime-token answer (the app is
+    // offline, or waiting for a user token) cannot know the project id yet, so
+    // its topic carries this placeholder until the answer arrives.
+    private static let unknownTopicPrefix = "rivium_sync/unknown/"
+
+    /// The topic as it is now that the project id may be known.
+    private func resolvedTopic(_ topic: String) -> String {
+        guard let projectId = projectId, topic.hasPrefix(Self.unknownTopicPrefix) else { return topic }
+        return "rivium_sync/\(projectId)/" + topic.dropFirst(Self.unknownTopicPrefix.count)
+    }
+
+    /// Move subscriptions made under the placeholder to the real project topic,
+    /// before they are subscribed on the socket.
+    private func rekeyUnknownTopics() {
+        guard projectId != nil else { return }
+        subscriptionsQueue.sync {
+            for (topic, callbacks) in subscriptions where topic.hasPrefix(Self.unknownTopicPrefix) {
+                subscriptions.removeValue(forKey: topic)
+                pnListeners.removeValue(forKey: topic)
+                subscriptions[resolvedTopic(topic), default: [:]].merge(callbacks) { current, _ in current }
+            }
         }
     }
 

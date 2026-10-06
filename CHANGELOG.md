@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- `connect()` can be called before sign-in when user tokens are required: the
+  SDK waits for a token and then connects.
+- Setting a token for a different user reconnects as that user.
+- Added `refreshUserToken()`, `isAwaitingUserToken` and `onAwaitingUserToken`.
+- Listeners added before the SDK is connected now receive updates.
+
 ## 0.2.0
 
 - Added `userTokens` (a token or a `provider`) so Security Rules can trust
