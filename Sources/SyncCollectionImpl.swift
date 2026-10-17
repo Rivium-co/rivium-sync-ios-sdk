@@ -43,7 +43,9 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func addWithOfflineSupport(data: [String: Any]) async throws -> SyncDocument {
-        let isOnline = syncEngine?.isOnline ?? true
+        // Write to the server unless the connection has reported offline - like reads. Before the first report
+        // (connect() not called yet, or still connecting) `isOnline` is false, which queued every write.
+        let isOnline = syncEngine?.isKnownOffline != true
         RiviumSyncLogger.d("addWithOfflineSupport: isOnline=\(isOnline), databaseId=\(databaseId), collectionId=\(id)")
 
         if isOnline {
@@ -185,7 +187,9 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func updateWithOfflineSupport(documentId: String, data: [String: Any]) async throws -> SyncDocument {
-        let isOnline = syncEngine?.isOnline ?? true
+        // Write to the server unless the connection has reported offline - like reads. Before the first report
+        // (connect() not called yet, or still connecting) `isOnline` is false, which queued every write.
+        let isOnline = syncEngine?.isKnownOffline != true
 
         // Get current version for conflict detection
         let existing = localStorageManager?.getDocument(documentId: documentId)
@@ -243,7 +247,9 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func setWithOfflineSupport(documentId: String, data: [String: Any]) async throws -> SyncDocument {
-        let isOnline = syncEngine?.isOnline ?? true
+        // Write to the server unless the connection has reported offline - like reads. Before the first report
+        // (connect() not called yet, or still connecting) `isOnline` is false, which queued every write.
+        let isOnline = syncEngine?.isKnownOffline != true
 
         if isOnline {
             do {
@@ -298,7 +304,9 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func deleteWithOfflineSupport(documentId: String) async throws {
-        let isOnline = syncEngine?.isOnline ?? true
+        // Write to the server unless the connection has reported offline - like reads. Before the first report
+        // (connect() not called yet, or still connecting) `isOnline` is false, which queued every write.
+        let isOnline = syncEngine?.isKnownOffline != true
 
         // Get current version for sync
         let existing = localStorageManager?.getDocument(documentId: documentId)
