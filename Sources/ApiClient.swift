@@ -20,7 +20,7 @@ internal class ApiClient {
         self.session = URLSession(configuration: configuration)
     }
     
-    private func buildRequest(endpoint: String, method: String = "GET", body: [String: Any]? = nil) async throws -> URLRequest {
+    internal func buildRequest(endpoint: String, method: String = "GET", body: [String: Any]? = nil) async throws -> URLRequest {
         guard let url = URL(string: "\(config.apiUrl)\(endpoint)") else {
             throw RiviumSyncError.invalidResponse("Invalid URL")
         }
@@ -29,6 +29,7 @@ internal class ApiClient {
         request.httpMethod = method
         request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.sdkHeaderValue, forHTTPHeaderField: RiviumSyncSDKInfo.headerName)
 
         // A signed token decides who the caller is; the plain userId header is
         // only a fallback, and a project with requireSignedTokens refuses it.

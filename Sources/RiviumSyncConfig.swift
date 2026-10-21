@@ -27,6 +27,14 @@ public struct RiviumSyncConfig {
     public let conflictResolver: ConflictResolver?
     public let maxSyncRetries: Int
 
+    /// Name of the official wrapper SDK (e.g. "flutter", "react-native") that
+    /// embeds this native SDK; reported in the `X-Rivium-SDK` header together
+    /// with `wrapperSdkVersion`. For Rivium's own wrappers only - apps leave it
+    /// nil. Both must be <=32 chars of `[A-Za-z0-9._+-]` or they are ignored.
+    public let wrapperSdkName: String?
+    /// Version of the official wrapper SDK. See `wrapperSdkName`.
+    public let wrapperSdkVersion: String?
+
     private static let defaultApiUrl = "https://sync.rivium.co"
     // TCP connection (DNS-only mode in Cloudflare for mqtt-sync subdomain)
     // Same as Android - CocoaMQTT works well with plain TCP
@@ -54,7 +62,9 @@ public struct RiviumSyncConfig {
         syncOnReconnect: Bool = true,
         conflictStrategy: ConflictStrategy = .serverWins,
         conflictResolver: ConflictResolver? = nil,
-        maxSyncRetries: Int? = nil
+        maxSyncRetries: Int? = nil,
+        wrapperSdkName: String? = nil,
+        wrapperSdkVersion: String? = nil
     ) {
         precondition(!apiKey.isEmpty, "API key cannot be empty")
 
@@ -76,6 +86,14 @@ public struct RiviumSyncConfig {
         self.conflictStrategy = conflictStrategy
         self.conflictResolver = conflictResolver
         self.maxSyncRetries = maxSyncRetries ?? Self.defaultMaxSyncRetries
+        self.wrapperSdkName = wrapperSdkName
+        self.wrapperSdkVersion = wrapperSdkVersion
+    }
+
+    /// Value of the `X-Rivium-SDK` header: `ios/<version>`, or the wrapper's
+    /// identity first with this native SDK underneath.
+    internal var sdkHeaderValue: String {
+        return RiviumSyncSDKInfo.headerValue(wrapperName: wrapperSdkName, wrapperVersion: wrapperSdkVersion)
     }
 
     internal var mqttServerUri: String {
@@ -105,6 +123,8 @@ public class RiviumSyncConfigBuilder {
     private var conflictStrategy: ConflictStrategy = .serverWins
     private var conflictResolver: ConflictResolver?
     private var maxSyncRetries: Int?
+    private var wrapperSdkName: String?
+    private var wrapperSdkVersion: String?
 
     public init(apiKey: String) {
         self.apiKey = apiKey
@@ -212,6 +232,15 @@ public class RiviumSyncConfigBuilder {
         return self
     }
 
+    /// For Rivium's official wrapper SDKs (Flutter, React Native) only: the
+    /// wrapper's name and version, reported in the `X-Rivium-SDK` header.
+    /// Apps should not call this.
+    public func wrapperSdk(name: String?, version: String?) -> Self {
+        self.wrapperSdkName = name
+        self.wrapperSdkVersion = version
+        return self
+    }
+
     public func build() -> RiviumSyncConfig {
         return RiviumSyncConfig(
             apiKey: apiKey,
@@ -231,7 +260,9 @@ public class RiviumSyncConfigBuilder {
             syncOnReconnect: syncOnReconnect,
             conflictStrategy: conflictStrategy,
             conflictResolver: conflictResolver,
-            maxSyncRetries: maxSyncRetries
+            maxSyncRetries: maxSyncRetries,
+            wrapperSdkName: wrapperSdkName,
+            wrapperSdkVersion: wrapperSdkVersion
         )
     }
 }
