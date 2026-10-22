@@ -16,14 +16,14 @@ Realtime database SDK for iOS with offline-first sync.
    ```
    https://github.com/Rivium-co/rivium-sync-ios-sdk
    ```
-3. Select version **0.2.3**
+3. Select version **0.2.4**
 4. Add **RiviumSync** library to your target
 
 ### Swift Package Manager (Package.swift)
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Rivium-co/rivium-sync-ios-sdk", from: "0.2.3"),
+    .package(url: "https://github.com/Rivium-co/rivium-sync-ios-sdk", from: "0.2.4"),
 ]
 ```
 
