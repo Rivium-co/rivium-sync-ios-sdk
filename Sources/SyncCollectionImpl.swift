@@ -106,8 +106,8 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     private func getWithOfflineSupport(documentId: String) async throws -> SyncDocument? {
-        // Ask the server unless we know we are offline; a failure still falls
-        // back to the cache below.
+        // Ask the server unless we know we are offline; a failure falls back to the cached copy. With no cached copy
+        // the error is thrown: nil means the document does not exist, never "could not reach the server".
         let isOnline = syncEngine?.isKnownOffline != true
 
         // Check local cache first
@@ -133,10 +133,14 @@ internal class SyncCollectionImpl: SyncCollection {
                 }
                 return doc
             } catch {
+                guard let cached = cached else { throw error }
                 RiviumSyncLogger.w("Failed to get document online, using cached: \(error)")
                 return cached
             }
         } else {
+            guard let cached = cached else {
+                throw RiviumSyncError.networkError("Offline, and document '\(documentId)' is not in the local cache", nil)
+            }
             return cached
         }
     }
