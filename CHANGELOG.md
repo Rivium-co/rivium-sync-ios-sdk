@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.5
+
+- Realtime is always encrypted, and the SDK always uses Rivium's endpoints.
+  Removed `apiUrl`, `mqttHost`, `mqttPort` and `mqttUseTls` from
+  `RiviumSyncConfig` and `RiviumSyncConfigBuilder`: remove them from your
+  code if you set them. If the Sync API's answer is missing or not an
+  encrypted rivium.co endpoint, the SDK uses its built-in encrypted endpoint;
+  it never connects unencrypted.
+
 ## 0.2.4
 
 - Realtime connects where the Sync API tells it (host, port and whether the
