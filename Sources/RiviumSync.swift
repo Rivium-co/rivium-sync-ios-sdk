@@ -35,7 +35,7 @@ public class RiviumSync {
     public private(set) static var shared: RiviumSync!
 
     /// SDK version
-    public static let version = "0.2.5"
+    public static let version = "0.2.6"
 
     private let config: RiviumSyncConfig
     internal let apiClient: ApiClient

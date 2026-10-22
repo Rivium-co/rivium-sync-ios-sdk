@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6
+
+- With offline persistence on, `get()` returns nil only when the document
+  does not exist. If the server can't be reached (or refuses) and the
+  document is not cached, it now throws the error instead of returning nil,
+  so your app can tell "not found" from "couldn't load".
+
 ## 0.2.5
 
 - Realtime is always encrypted, and the SDK always uses Rivium's endpoints.
