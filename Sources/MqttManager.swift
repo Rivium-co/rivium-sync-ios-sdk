@@ -33,6 +33,8 @@ internal class MqttManager {
     // came back. These drive a retry of the whole connect, token included.
     private var wantConnected = false
     private var tokenRetryAttempt = 0
+    /// Where the next connectWithToken connects (set with the token it got); guarded by the lock.
+    private var nextEndpoint: MqttEndpoint?
     private var tokenRetryTask: Task<Void, Never>?
     private static let tokenRetryBaseSeconds: Double = 2
     private static let tokenRetryMaxSeconds: Double = 30
@@ -132,6 +134,13 @@ internal class MqttManager {
                 projectId = tokenResponse.projectId
                 rekeyUnknownTopics()
                 RiviumSyncLogger.d("MQTT token obtained")
+                // The server says where to connect (it can move clients to an encrypted port) unless the app set
+                // its own endpoint; only a valid rivium.co endpoint is used. There is no fallback from TLS to plain.
+                let configured = MqttEndpoint(host: self.config.mqttHost, port: self.config.mqttPort, useTls: self.config.mqttUseTls)
+                let endpoint = self.config.mqttEndpointFromApp
+                    ? configured
+                    : MqttEndpoint.resolve(host: tokenResponse.mqtt?.host, port: tokenResponse.mqtt?.port, useTls: tokenResponse.mqtt?.useTls, default: configured)
+                self.locked { self.nextEndpoint = endpoint }
                 self.connectWithToken(token: tokenResponse.token, completion: completion)
             } catch {
                 let current: Bool = locked {
@@ -254,7 +263,10 @@ internal class MqttManager {
     /// Opens the socket. Separate so the token handling above can be tested
     /// without a broker.
     func connectWithToken(token: String, completion: @escaping (Result<Void, Error>) -> Void) {
-        RiviumSyncLogger.d("Connecting to \(config.mqttHost):\(config.mqttPort) (TLS: \(config.mqttUseTls))")
+        // The endpoint chosen with this token (server answer or app setting), else the config's.
+        let chosen: MqttEndpoint? = locked { defer { nextEndpoint = nil }; return nextEndpoint }
+        let endpoint = chosen ?? MqttEndpoint(host: config.mqttHost, port: config.mqttPort, useTls: config.mqttUseTls)
+        RiviumSyncLogger.d("Connecting to \(endpoint.host):\(endpoint.port) (TLS: \(endpoint.useTls))")
 
         // Close any existing socket to prevent orphaned connections
         if socket != nil {
@@ -266,15 +278,15 @@ internal class MqttManager {
         }
 
         let pnConfig = PNConfig(
-            gateway: config.mqttHost,
-            port: UInt16(config.mqttPort),
+            gateway: endpoint.host,
+            port: UInt16(endpoint.port),
             clientId: clientId,
             auth: .basic(username: "jwt", password: token),
             heartbeatInterval: UInt16(config.keepAliveInterval),
             connectionTimeout: TimeInterval(config.connectionTimeout),
             freshStart: true,
             autoReconnect: config.autoReconnect,
-            secure: config.mqttUseTls
+            secure: endpoint.useTls
         )
 
         socket = PNSocket(config: pnConfig)

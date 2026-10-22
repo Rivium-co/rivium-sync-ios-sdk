@@ -13,6 +13,9 @@ public struct RiviumSyncConfig {
     public let mqttHost: String
     public let mqttPort: Int
     public let mqttUseTls: Bool
+    /// True when the app set the MQTT host, port or TLS itself: those are then used as they are. Otherwise the
+    /// endpoint the Sync API returns with the connection token is used (a rivium.co host), else these defaults.
+    internal let mqttEndpointFromApp: Bool
     public let debugMode: Bool
     public let autoReconnect: Bool
     public let reconnectInterval: TimeInterval
@@ -75,6 +78,7 @@ public struct RiviumSyncConfig {
         self.mqttHost = mqttHost ?? Self.defaultMqttHost
         self.mqttPort = mqttPort ?? Self.defaultMqttPort
         self.mqttUseTls = mqttUseTls ?? Self.defaultMqttUseTls
+        self.mqttEndpointFromApp = mqttHost != nil || mqttPort != nil || mqttUseTls != nil
         self.debugMode = debugMode
         self.autoReconnect = autoReconnect
         self.reconnectInterval = reconnectInterval
@@ -111,7 +115,7 @@ public class RiviumSyncConfigBuilder {
     private var apiUrl: String?
     private var mqttHost: String?
     private var mqttPort: Int?
-    private var mqttUseTls: Bool = false  // Default to plain TCP like Android
+    private var mqttUseTls: Bool?  // nil = the server's choice (see RiviumSyncConfig.mqttEndpointFromApp)
     private var debugMode: Bool = false
     private var autoReconnect: Bool = true
     private var reconnectInterval: TimeInterval = 5.0
