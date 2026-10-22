@@ -2,7 +2,7 @@ import XCTest
 @testable import RiviumSync
 
 final class MqttEndpointTests: XCTestCase {
-    private let fallback = MqttEndpoint(host: "mqtt-sync.rivium.co", port: 1884, useTls: false)
+    private let fallback = MqttEndpoint(host: "mqtt-sync.rivium.co", port: 8885, useTls: true)
 
     func testUsesTheServersEndpointWhenValid() {
         XCTAssertEqual(MqttEndpoint.resolve(host: "mqtt-sync.rivium.co", port: 8885, useTls: true, default: fallback), MqttEndpoint(host: "mqtt-sync.rivium.co", port: 8885, useTls: true))
@@ -24,9 +24,15 @@ final class MqttEndpointTests: XCTestCase {
         }
     }
 
-    func testAnAppThatSetsItsOwnEndpointKeepsIt() {
-        XCTAssertFalse(RiviumSyncConfig(apiKey: "rv_live_x").mqttEndpointFromApp)
-        XCTAssertTrue(RiviumSyncConfig(apiKey: "rv_live_x", mqttHost: "localhost").mqttEndpointFromApp)
-        XCTAssertTrue(RiviumSyncConfig(apiKey: "rv_live_x", mqttUseTls: false).mqttEndpointFromApp)
+    func testNeverUnencryptedWhateverTheServerAnswers() {
+        XCTAssertEqual(MqttEndpoint.resolve(host: "mqtt-sync.rivium.co", port: 1884, useTls: false, default: fallback), fallback)
+        XCTAssertEqual(MqttEndpoint.resolve(host: "other.rivium.co", port: 1884, useTls: false, default: fallback), fallback)
+    }
+
+    func testTheBuiltInEndpointsAreEncrypted() {
+        let config = RiviumSyncConfig(apiKey: "rv_live_x")
+        XCTAssertEqual(MqttEndpoint(host: config.mqttHost, port: config.mqttPort, useTls: config.mqttUseTls), fallback)
+        XCTAssertEqual(config.mqttServerUri, "mqtts://mqtt-sync.rivium.co:8885")
+        XCTAssertEqual(config.apiUrl, "https://sync.rivium.co")
     }
 }

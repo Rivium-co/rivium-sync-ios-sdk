@@ -9,13 +9,13 @@ public struct RiviumSyncConfig {
     public let userId: String?
     /// Signed user token, if the app already holds one at init.
     public let userToken: String?
-    public let apiUrl: String
-    public let mqttHost: String
-    public let mqttPort: Int
-    public let mqttUseTls: Bool
-    /// True when the app set the MQTT host, port or TLS itself: those are then used as they are. Otherwise the
-    /// endpoint the Sync API returns with the connection token is used (a rivium.co host), else these defaults.
-    internal let mqttEndpointFromApp: Bool
+    /// Rivium's endpoints, fixed in the SDK: HTTPS for the API, MQTT over TLS for realtime. Apps can't change them,
+    /// so nothing is ever sent unencrypted. The Sync API may move realtime to another encrypted rivium.co endpoint
+    /// (see MqttEndpoint).
+    internal let apiUrl: String
+    internal let mqttHost: String
+    internal let mqttPort: Int
+    internal let mqttUseTls: Bool
     public let debugMode: Bool
     public let autoReconnect: Bool
     public let reconnectInterval: TimeInterval
@@ -39,11 +39,9 @@ public struct RiviumSyncConfig {
     public let wrapperSdkVersion: String?
 
     private static let defaultApiUrl = "https://sync.rivium.co"
-    // TCP connection (DNS-only mode in Cloudflare for mqtt-sync subdomain)
-    // Same as Android - CocoaMQTT works well with plain TCP
     private static let defaultMqttHost = "mqtt-sync.rivium.co"
-    private static let defaultMqttPort = 1884
-    private static let defaultMqttUseTls = false
+    private static let defaultMqttPort = 8885
+    private static let defaultMqttUseTls = true
     private static let defaultOfflineCacheSizeMb = 100
     private static let defaultMaxSyncRetries = 3
 
@@ -51,10 +49,6 @@ public struct RiviumSyncConfig {
         apiKey: String,
         userId: String? = nil,
         userToken: String? = nil,
-        apiUrl: String? = nil,
-        mqttHost: String? = nil,
-        mqttPort: Int? = nil,
-        mqttUseTls: Bool? = nil,
         debugMode: Bool = false,
         autoReconnect: Bool = true,
         reconnectInterval: TimeInterval = 5.0,
@@ -74,11 +68,10 @@ public struct RiviumSyncConfig {
         self.apiKey = apiKey
         self.userId = userId
         self.userToken = userToken
-        self.apiUrl = apiUrl ?? Self.defaultApiUrl
-        self.mqttHost = mqttHost ?? Self.defaultMqttHost
-        self.mqttPort = mqttPort ?? Self.defaultMqttPort
-        self.mqttUseTls = mqttUseTls ?? Self.defaultMqttUseTls
-        self.mqttEndpointFromApp = mqttHost != nil || mqttPort != nil || mqttUseTls != nil
+        self.apiUrl = Self.defaultApiUrl
+        self.mqttHost = Self.defaultMqttHost
+        self.mqttPort = Self.defaultMqttPort
+        self.mqttUseTls = Self.defaultMqttUseTls
         self.debugMode = debugMode
         self.autoReconnect = autoReconnect
         self.reconnectInterval = reconnectInterval
@@ -112,10 +105,6 @@ public class RiviumSyncConfigBuilder {
     private let apiKey: String
     private var userId: String?
     private var userToken: String?
-    private var apiUrl: String?
-    private var mqttHost: String?
-    private var mqttPort: Int?
-    private var mqttUseTls: Bool?  // nil = the server's choice (see RiviumSyncConfig.mqttEndpointFromApp)
     private var debugMode: Bool = false
     private var autoReconnect: Bool = true
     private var reconnectInterval: TimeInterval = 5.0
@@ -155,25 +144,9 @@ public class RiviumSyncConfigBuilder {
         return self
     }
 
-    public func apiUrl(_ url: String) -> Self {
-        self.apiUrl = url
-        return self
-    }
 
-    public func mqttHost(_ host: String) -> Self {
-        self.mqttHost = host
-        return self
-    }
 
-    public func mqttPort(_ port: Int) -> Self {
-        self.mqttPort = port
-        return self
-    }
 
-    public func mqttUseTls(_ useTls: Bool) -> Self {
-        self.mqttUseTls = useTls
-        return self
-    }
 
     public func debugMode(_ debug: Bool) -> Self {
         self.debugMode = debug
@@ -250,10 +223,6 @@ public class RiviumSyncConfigBuilder {
             apiKey: apiKey,
             userId: userId,
             userToken: userToken,
-            apiUrl: apiUrl,
-            mqttHost: mqttHost,
-            mqttPort: mqttPort,
-            mqttUseTls: mqttUseTls,
             debugMode: debugMode,
             autoReconnect: autoReconnect,
             reconnectInterval: reconnectInterval,

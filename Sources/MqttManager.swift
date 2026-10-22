@@ -134,12 +134,10 @@ internal class MqttManager {
                 projectId = tokenResponse.projectId
                 rekeyUnknownTopics()
                 RiviumSyncLogger.d("MQTT token obtained")
-                // The server says where to connect (it can move clients to an encrypted port) unless the app set
-                // its own endpoint; only a valid rivium.co endpoint is used. There is no fallback from TLS to plain.
+                // The server says where to connect; only a valid encrypted rivium.co endpoint is used, else the
+                // built-in encrypted one. Never plain.
                 let configured = MqttEndpoint(host: self.config.mqttHost, port: self.config.mqttPort, useTls: self.config.mqttUseTls)
-                let endpoint = self.config.mqttEndpointFromApp
-                    ? configured
-                    : MqttEndpoint.resolve(host: tokenResponse.mqtt?.host, port: tokenResponse.mqtt?.port, useTls: tokenResponse.mqtt?.useTls, default: configured)
+                let endpoint = MqttEndpoint.resolve(host: tokenResponse.mqtt?.host, port: tokenResponse.mqtt?.port, useTls: tokenResponse.mqtt?.useTls, default: configured)
                 self.locked { self.nextEndpoint = endpoint }
                 self.connectWithToken(token: tokenResponse.token, completion: completion)
             } catch {
@@ -263,7 +261,7 @@ internal class MqttManager {
     /// Opens the socket. Separate so the token handling above can be tested
     /// without a broker.
     func connectWithToken(token: String, completion: @escaping (Result<Void, Error>) -> Void) {
-        // The endpoint chosen with this token (server answer or app setting), else the config's.
+        // The endpoint chosen with this token (the server's answer), else the built-in one.
         let chosen: MqttEndpoint? = locked { defer { nextEndpoint = nil }; return nextEndpoint }
         let endpoint = chosen ?? MqttEndpoint(host: config.mqttHost, port: config.mqttPort, useTls: config.mqttUseTls)
         RiviumSyncLogger.d("Connecting to \(endpoint.host):\(endpoint.port) (TLS: \(endpoint.useTls))")

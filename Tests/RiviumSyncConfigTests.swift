@@ -197,38 +197,15 @@ final class RiviumSyncConfigTests: XCTestCase {
         XCTAssertEqual(config.maxSyncRetries, 3)
     }
 
-    // MARK: - Custom URLs
+    // MARK: - Endpoints (fixed, always encrypted)
 
-    func testApiUrlCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
-            .apiUrl("https://custom.api.com")
-            .build()
+    func testEndpointsAreFixedAndEncrypted() {
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123").build()
 
-        XCTAssertEqual(config.apiUrl, "https://custom.api.com")
-    }
-
-    func testMqttHostCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
-            .mqttHost("custom.mqtt.com")
-            .build()
-
-        XCTAssertEqual(config.mqttHost, "custom.mqtt.com")
-    }
-
-    func testMqttPortCanBeSet() {
-        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
-            .mqttPort(1883)
-            .build()
-
-        XCTAssertEqual(config.mqttPort, 1883)
-    }
-
-    func testMqttUseTlsCanBeDisabled() {
-        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
-            .mqttUseTls(false)
-            .build()
-
-        XCTAssertFalse(config.mqttUseTls)
+        XCTAssertEqual(config.apiUrl, "https://sync.rivium.co")
+        XCTAssertEqual(config.mqttHost, "mqtt-sync.rivium.co")
+        XCTAssertEqual(config.mqttPort, 8885)
+        XCTAssertTrue(config.mqttUseTls)
     }
 
     // MARK: - Connection Settings
@@ -287,10 +264,6 @@ final class RiviumSyncConfigTests: XCTestCase {
     func testDirectInitWithAllParameters() {
         let config = RiviumSyncConfig(
             apiKey: "rv_live_xyz789",
-            apiUrl: "https://api.example.com",
-            mqttHost: "mqtt.example.com",
-            mqttPort: 8883,
-            mqttUseTls: true,
             debugMode: true,
             autoReconnect: false,
             reconnectInterval: 10,
@@ -305,10 +278,6 @@ final class RiviumSyncConfigTests: XCTestCase {
         )
 
         XCTAssertEqual(config.apiKey, "rv_live_xyz789")
-        XCTAssertEqual(config.apiUrl, "https://api.example.com")
-        XCTAssertEqual(config.mqttHost, "mqtt.example.com")
-        XCTAssertEqual(config.mqttPort, 8883)
-        XCTAssertTrue(config.mqttUseTls)
         XCTAssertTrue(config.debugMode)
         XCTAssertFalse(config.autoReconnect)
         XCTAssertEqual(config.reconnectInterval, 10)
@@ -323,23 +292,9 @@ final class RiviumSyncConfigTests: XCTestCase {
 
     // MARK: - mqttServerUri
 
-    func testMqttServerUriWithTls() {
-        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
-            .mqttHost("mqtt.example.com")
-            .mqttPort(8883)
-            .mqttUseTls(true)
-            .build()
+    func testMqttServerUriIsAlwaysEncrypted() {
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123").build()
 
-        XCTAssertEqual(config.mqttServerUri, "mqtts://mqtt.example.com:8883")
-    }
-
-    func testMqttServerUriWithoutTls() {
-        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123")
-            .mqttHost("mqtt.example.com")
-            .mqttPort(1883)
-            .mqttUseTls(false)
-            .build()
-
-        XCTAssertEqual(config.mqttServerUri, "mqtt://mqtt.example.com:1883")
+        XCTAssertEqual(config.mqttServerUri, "mqtts://mqtt-sync.rivium.co:8885")
     }
 }
