@@ -38,6 +38,10 @@ public class SyncEngine {
         func onSyncFailed(error: Error)
         func onConflictDetected(conflict: ConflictInfo)
         func onDocumentSynced(documentId: String, operation: OperationType)
+        /// The server refused a write that was waiting offline (the security rules, invalid data), as in Firestore:
+        /// the write is dropped, not retried, and the local copy goes back to what the server has (a refused new
+        /// document disappears). `error` is the server's answer.
+        func onDocumentRejected(documentId: String, operation: OperationType, error: Error)
     }
 
     internal init(
@@ -156,9 +160,12 @@ public class SyncEngine {
                         syncedCount += 1
                         pendingCount -= 1
                     }
+                } catch let rejection where Self.isRejection(rejection) {
+                    await rollBack(doc, error: rejection)
                 } catch {
                     RiviumSyncLogger.e("SyncEngine: Failed to sync document \(doc.id): \(error)")
-                    localStore.updateSyncStatus(documentId: doc.id, status: .syncFailed, error: error.localizedDescription)
+                    // Keep it queued as it is (retried by the next sync) and continue with the others.
+                    localStore.updateSyncStatus(documentId: doc.id, status: doc.syncStatus, error: error.localizedDescription)
                 }
             }
 
@@ -188,7 +195,30 @@ public class SyncEngine {
         }
     }
 
+    /// A queued `set()`: written with its id and its merge flag.
+    private func syncSet(_ cached: CachedDocument, merge: Bool, operation: OperationType) async throws -> Bool {
+        let serverDoc = try await apiClient.setDocument(
+            databaseId: cached.databaseId,
+            collectionId: cached.collectionId,
+            documentId: cached.id,
+            data: cached.getData(),
+            merge: merge
+        )
+        localStore.saveDocument(
+            document: serverDoc,
+            databaseId: cached.databaseId,
+            collectionId: cached.collectionId,
+            syncStatus: .synced
+        )
+        syncListeners.forEach { $0.onDocumentSynced(documentId: cached.id, operation: operation) }
+        RiviumSyncLogger.d("SyncEngine: Set document \(cached.id)")
+        return true
+    }
+
     private func syncCreate(_ cached: CachedDocument) async throws -> Bool {
+        if let merge = cached.setMerge {
+            return try await syncSet(cached, merge: merge, operation: .create)
+        }
         let data = cached.getData()
         let serverDoc = try await apiClient.addDocument(
             databaseId: cached.databaseId,
@@ -227,6 +257,10 @@ public class SyncEngine {
         if let serverDoc = serverDoc, serverDoc.version != baseVersion {
             // Conflict detected!
             return try await handleConflict(local: cached, server: serverDoc)
+        }
+
+        if let merge = cached.setMerge {
+            return try await syncSet(cached, merge: merge, operation: .update)
         }
 
         // No conflict, proceed with update
@@ -282,7 +316,8 @@ public class SyncEngine {
                 databaseId: local.databaseId,
                 collectionId: local.collectionId,
                 documentId: local.id,
-                data: local.getData()
+                data: local.getData(),
+                merge: local.setMerge ?? true
             )
             localStore.saveDocument(
                 document: updated,
@@ -300,7 +335,8 @@ public class SyncEngine {
                 databaseId: local.databaseId,
                 collectionId: local.collectionId,
                 documentId: local.id,
-                data: merged
+                data: merged,
+                merge: true
             )
             localStore.saveDocument(
                 document: updated,
@@ -321,7 +357,8 @@ public class SyncEngine {
                         databaseId: local.databaseId,
                         collectionId: local.collectionId,
                         documentId: local.id,
-                        data: local.getData()
+                        data: local.getData(),
+                        merge: local.setMerge ?? true
                     )
                     localStore.saveDocument(
                         document: updated,
@@ -342,7 +379,8 @@ public class SyncEngine {
                         databaseId: local.databaseId,
                         collectionId: local.collectionId,
                         documentId: local.id,
-                        data: data
+                        data: data,
+                        merge: true
                     )
                     localStore.saveDocument(
                         document: updated,
@@ -392,7 +430,8 @@ public class SyncEngine {
             return true
         } catch {
             // If document not found on server, consider it deleted
-            if error.localizedDescription.contains("404") || error.localizedDescription.contains("not found") {
+            if SyncErrors.httpStatus(error) == 404 ||
+                error.localizedDescription.contains("404") || error.localizedDescription.contains("not found") {
                 localStore.deleteDocument(documentId: cached.id)
                 RiviumSyncLogger.d("SyncEngine: Document \(cached.id) already deleted on server")
                 return true
@@ -401,12 +440,47 @@ public class SyncEngine {
         }
     }
 
-    private func retrySyncFailed(_ cached: CachedDocument) async throws -> Bool {
-        guard cached.retryCount < maxRetries else {
-            RiviumSyncLogger.w("SyncEngine: Max retries exceeded for document \(cached.id)")
-            return false
-        }
+    /// The server's final answer to a queued write (403 refused by the rules, 400 / 422 invalid...): retrying cannot
+    /// change it. A 409 is a version conflict, handled by retrying with conflict resolution as before.
+    static func isRejection(_ error: Error) -> Bool {
+        !SyncErrors.isTransient(error) && SyncErrors.httpStatus(error) != 409
+    }
 
+    /// Drop a queued write the server refused and put the local copy back to the server's (Firestore): a refused
+    /// new document disappears, a refused update or delete shows the server's document again. Sync listeners get
+    /// `onDocumentRejected`.
+    private func rollBack(_ cached: CachedDocument, error: Error) async {
+        let operation: OperationType
+        switch cached.syncStatus {
+        case .pendingDelete: operation = .delete
+        case .pendingCreate: operation = .create
+        default: operation = cached.baseVersion == nil ? .create : .update
+        }
+        RiviumSyncLogger.w("SyncEngine: Server refused queued \(operation) of \(cached.id), rolling back: \(error.localizedDescription)")
+        var server: SyncDocument?
+        // A document created offline with add() (local_ id) was never on the server; anything else is read back.
+        if !(operation == .create && cached.setMerge == nil) {
+            do {
+                server = try await apiClient.getDocument(databaseId: cached.databaseId, collectionId: cached.collectionId, documentId: cached.id)
+            } catch let readError where SyncErrors.isTransient(readError) {
+                // Can't read the server's copy now: keep it queued, the next sync rolls it back.
+                localStore.updateSyncStatus(documentId: cached.id, status: cached.syncStatus, error: error.localizedDescription)
+                return
+            } catch {
+                server = nil // The user may not read it either: nothing to show.
+            }
+        }
+        if let server = server {
+            localStore.saveDocument(document: server, databaseId: cached.databaseId, collectionId: cached.collectionId, syncStatus: .synced)
+        } else {
+            localStore.deleteDocument(documentId: cached.id)
+        }
+        syncListeners.forEach { $0.onDocumentRejected(documentId: cached.id, operation: operation, error: error) }
+    }
+
+    private func retrySyncFailed(_ cached: CachedDocument) async throws -> Bool {
+        // No cap (Firestore): a write the server could not take is sent until it goes through; one the server
+        // refuses is rolled back. Rows of older versions only: a failed send now keeps its pending state.
         // Determine the original operation type based on the document state
         if cached.baseVersion == nil {
             return try await syncCreate(cached)
@@ -423,4 +497,5 @@ public extension SyncEngine.SyncListener {
     func onSyncFailed(error: Error) {}
     func onConflictDetected(conflict: ConflictInfo) {}
     func onDocumentSynced(documentId: String, operation: OperationType) {}
+    func onDocumentRejected(documentId: String, operation: OperationType, error: Error) {}
 }

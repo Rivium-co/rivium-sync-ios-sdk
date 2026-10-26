@@ -26,6 +26,13 @@ targets:
     platform: iOS
     sources:
       - path: RiviumSyncExample
+        excludes:
+          - "Local*.plist"
+    # Local.plist (not checked in, see Config.swift) is copied only when it exists, so the example builds without it.
+    postCompileScripts:
+      - name: Copy Local.plist
+        script: |
+          [ -f "$SRCROOT/RiviumSyncExample/Local.plist" ] && cp "$SRCROOT/RiviumSyncExample/Local.plist" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Local.plist" || true
     settings:
       base:
         INFOPLIST_FILE: RiviumSyncExample/Info.plist

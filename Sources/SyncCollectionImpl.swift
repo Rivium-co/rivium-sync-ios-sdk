@@ -62,11 +62,10 @@ internal class SyncCollectionImpl: SyncCollection {
                     syncStatus: .synced
                 )
                 return doc
-            } catch let error as RiviumSyncError {
-                RiviumSyncLogger.e("addWithOfflineSupport: RiviumSyncError - \(error.localizedDescription)", error: error)
-                return createOfflineDocument(data: data)
             } catch {
-                RiviumSyncLogger.e("addWithOfflineSupport: Unknown error - \(error.localizedDescription)", error: error)
+                // The server's final answer (the rules refused it, invalid data) is the app's to see, never queued.
+                guard SyncErrors.isTransient(error) else { throw error }
+                RiviumSyncLogger.e("addWithOfflineSupport: \(error.localizedDescription), saving offline", error: error)
                 return createOfflineDocument(data: data)
             }
         } else {
@@ -133,7 +132,8 @@ internal class SyncCollectionImpl: SyncCollection {
                 }
                 return doc
             } catch {
-                guard let cached = cached else { throw error }
+                // The cache stands in only when the server could not answer; a refusal is the app's to see.
+                guard let cached = cached, SyncErrors.isTransient(error) else { throw error }
                 RiviumSyncLogger.w("Failed to get document online, using cached: \(error)")
                 return cached
             }
@@ -175,6 +175,8 @@ internal class SyncCollectionImpl: SyncCollection {
                 }
                 return docs
             } catch {
+                // The cache stands in only when the server could not answer; a refusal (query_not_allowed) is thrown.
+                guard SyncErrors.isTransient(error) else { throw error }
                 RiviumSyncLogger.w("Failed to get documents online, using cached: \(error)")
                 return localStorageManager?.getDocuments(databaseId: databaseId, collectionId: id) ?? []
             }
@@ -211,6 +213,7 @@ internal class SyncCollectionImpl: SyncCollection {
                 )
                 return doc
             } catch {
+                guard SyncErrors.isTransient(error) else { throw error }
                 RiviumSyncLogger.w("Failed to update document online, saving offline: \(error)")
                 return updateOfflineDocument(documentId: documentId, data: data, baseVersion: baseVersion)
             }
@@ -244,20 +247,24 @@ internal class SyncCollectionImpl: SyncCollection {
     }
 
     func set(documentId: String, data: [String: Any]) async throws -> SyncDocument {
-        if isOfflineEnabled {
-            return try await setWithOfflineSupport(documentId: documentId, data: data)
-        }
-        return try await apiClient.setDocument(databaseId: databaseId, collectionId: id, documentId: documentId, data: data)
+        try await set(documentId: documentId, data: data, merge: false)
     }
 
-    private func setWithOfflineSupport(documentId: String, data: [String: Any]) async throws -> SyncDocument {
+    func set(documentId: String, data: [String: Any], merge: Bool = false) async throws -> SyncDocument {
+        if isOfflineEnabled {
+            return try await setWithOfflineSupport(documentId: documentId, data: data, merge: merge)
+        }
+        return try await apiClient.setDocument(databaseId: databaseId, collectionId: id, documentId: documentId, data: data, merge: merge)
+    }
+
+    private func setWithOfflineSupport(documentId: String, data: [String: Any], merge: Bool) async throws -> SyncDocument {
         // Write to the server unless the connection has reported offline - like reads. Before the first report
         // (connect() not called yet, or still connecting) `isOnline` is false, which queued every write.
         let isOnline = syncEngine?.isKnownOffline != true
 
         if isOnline {
             do {
-                let doc = try await apiClient.setDocument(databaseId: databaseId, collectionId: id, documentId: documentId, data: data)
+                let doc = try await apiClient.setDocument(databaseId: databaseId, collectionId: id, documentId: documentId, data: data, merge: merge)
                 localStorageManager?.saveDocument(
                     document: doc,
                     databaseId: databaseId,
@@ -266,22 +273,30 @@ internal class SyncCollectionImpl: SyncCollection {
                 )
                 return doc
             } catch {
+                guard SyncErrors.isTransient(error) else { throw error }
                 RiviumSyncLogger.w("Failed to set document online, saving offline: \(error)")
-                return setOfflineDocument(documentId: documentId, data: data)
+                return setOfflineDocument(documentId: documentId, data: data, merge: merge)
             }
         } else {
-            return setOfflineDocument(documentId: documentId, data: data)
+            return setOfflineDocument(documentId: documentId, data: data, merge: merge)
         }
     }
 
-    private func setOfflineDocument(documentId: String, data: [String: Any]) -> SyncDocument {
+    private func setOfflineDocument(documentId: String, data: [String: Any], merge: Bool) -> SyncDocument {
         let existing = localStorageManager?.getDocument(documentId: documentId)
         let now = Date().timeIntervalSince1970 * 1000
         let isCreate = existing == nil
 
+        // The local copy shows what the server will hold once the queued set is sent.
+        var written = data
+        if merge, let existing = existing {
+            written = existing.data.mapValues { $0.value }
+            for (key, value) in data { written[key] = value }
+        }
+
         let doc = SyncDocument(
             id: documentId,
-            data: data,
+            data: written,
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
             version: (existing?.version ?? 0) + 1
@@ -292,7 +307,8 @@ internal class SyncCollectionImpl: SyncCollection {
             databaseId: databaseId,
             collectionId: id,
             syncStatus: isCreate ? .pendingCreate : .pendingUpdate,
-            baseVersion: existing?.version
+            baseVersion: existing?.version,
+            setMerge: merge
         )
 
         RiviumSyncLogger.d("Set offline document: \(documentId) (\(isCreate ? "create" : "update"))")
@@ -322,6 +338,12 @@ internal class SyncCollectionImpl: SyncCollection {
                 // Remove from cache
                 localStorageManager?.deleteDocument(documentId: documentId)
             } catch {
+                // Already gone on the server: deleted, as in Firestore.
+                if SyncErrors.httpStatus(error) == 404 {
+                    localStorageManager?.deleteDocument(documentId: documentId)
+                    return
+                }
+                guard SyncErrors.isTransient(error) else { throw error }
                 RiviumSyncLogger.w("Failed to delete document online, marking for delete: \(error)")
                 // Mark for delete when back online
                 localStorageManager?.markPendingDelete(documentId: documentId, databaseId: databaseId, collectionId: id, baseVersion: baseVersion)
@@ -344,10 +366,78 @@ internal class SyncCollectionImpl: SyncCollection {
     }
     
     // MARK: - Realtime Listeners
-    
+
     func listen(callback: @escaping ([SyncDocument]) -> Void) -> ListenerRegistration {
+        listen(callback: callback, onError: { error in
+            RiviumSyncLogger.e("Collection listener error", error: error)
+        })
+    }
+
+    func listen(callback: @escaping ([SyncDocument]) -> Void, onError: @escaping (Error) -> Void) -> ListenerRegistration {
+        let store = localStorageManager
+        let databaseId = self.databaseId, collectionId = id
+        let listener = ServerListener(
+            spec: ListenSpec(databaseId: databaseId, collectionId: collectionId, documentId: nil),
+            transport: apiClient,
+            topics: mqttManager,
+            onDocuments: callback,
+            onError: onError,
+            fallback: { [self] in self.topicListen(callback: callback, onError: onError) },
+            offlineSnapshot: store.map { store in { store.getDocuments(databaseId: databaseId, collectionId: collectionId) } },
+            cacheWriter: cacheWriter(),
+            completeSnapshot: { [apiClient] in
+                try await apiClient.fetchCollection(databaseId: databaseId, collectionId: collectionId).documents
+            }
+        )
+        return Self.run(listener, registry: mqttManager.serverListeners)
+    }
+
+    func listenDocument(documentId: String, callback: @escaping (SyncDocument?) -> Void) -> ListenerRegistration {
+        listenDocument(documentId: documentId, callback: callback, onError: { error in
+            RiviumSyncLogger.e("Document listener error", error: error)
+        })
+    }
+
+    func listenDocument(documentId: String, callback: @escaping (SyncDocument?) -> Void, onError: @escaping (Error) -> Void) -> ListenerRegistration {
+        let store = localStorageManager
+        let listener = ServerListener(
+            spec: ListenSpec(databaseId: databaseId, collectionId: id, documentId: documentId),
+            transport: apiClient,
+            topics: mqttManager,
+            onDocument: callback,
+            onError: onError,
+            fallback: { [self] in self.topicListenDocument(documentId: documentId, callback: callback, onError: onError) },
+            offlineSnapshot: store.map { store in { store.getDocument(documentId: documentId).map { [$0] } } },
+            cacheWriter: cacheWriter()
+        )
+        return Self.run(listener, registry: mqttManager.serverListeners)
+    }
+
+    /// Starts a server-routed listener; removing the registration stops it.
+    static func run(_ listener: ServerListener, registry: ServerListenerRegistry) -> ListenerRegistration {
+        registry.add(listener)
+        listener.start()
+        return ListenerRegistrationImpl { [weak registry] in
+            listener.stop()
+            registry?.remove(listener)
+        }
+    }
+
+    /// With offline persistence, what listeners receive refreshes the local copy - never one with local changes
+    /// that are not sent yet.
+    private func cacheWriter() -> (([SyncDocument], [String]) -> Void)? {
+        guard let store = localStorageManager else { return nil }
+        let databaseId = self.databaseId, collectionId = id
+        return { saved, removed in
+            store.applyServerChanges(saved: saved, removed: removed, databaseId: databaseId, collectionId: collectionId)
+        }
+    }
+
+    // MARK: - Topic listening (Sync APIs without server-routed listeners)
+
+    func topicListen(callback: @escaping ([SyncDocument]) -> Void, onError: @escaping (Error) -> Void) -> ListenerRegistration {
         let topic = mqttManager.collectionTopic(databaseId: databaseId, collectionId: id)
-        
+
         // Initial fetch
         Task {
             do {
@@ -357,9 +447,10 @@ internal class SyncCollectionImpl: SyncCollection {
                 }
             } catch {
                 RiviumSyncLogger.e("Failed to fetch initial documents", error: error)
+                DispatchQueue.main.async { onError(error) }
             }
         }
-        
+
         // Subscribe to MQTT changes
         // Note: We capture self strongly here because the collection instance needs to stay alive
         // for the lifetime of the subscription. The ListenerRegistration will unsubscribe when removed.
@@ -367,9 +458,7 @@ internal class SyncCollectionImpl: SyncCollection {
             Task {
                 do {
                     let documents = try await self.getAll()
-                    RiviumSyncLogger.i("listen: Re-fetched \(documents.count) docs, dispatching callback to main queue")
                     DispatchQueue.main.async {
-                        RiviumSyncLogger.i("listen: Calling callback with \(documents.count) documents")
                         callback(documents)
                     }
                 } catch {
@@ -382,12 +471,11 @@ internal class SyncCollectionImpl: SyncCollection {
             mqttManager.unsubscribe(handle: handle)
         }
     }
-    
-    func listenDocument(documentId: String, callback: @escaping (SyncDocument?) -> Void) -> ListenerRegistration {
-        // Subscribe to the collection topic and filter by documentId,
-        // since the server publishes all changes to the collection-level topic
-        let topic = mqttManager.collectionTopic(databaseId: databaseId, collectionId: id)
-        RiviumSyncLogger.i("listenDocument: Subscribing to collection MQTT topic: \(topic) for documentId: \(documentId)")
+
+    func topicListenDocument(documentId: String, callback: @escaping (SyncDocument?) -> Void, onError: @escaping (Error) -> Void) -> ListenerRegistration {
+        // The document's own topic: the collection topic would deliver (and bill) every change in the collection.
+        let topic = mqttManager.documentTopic(databaseId: databaseId, collectionId: id, documentId: documentId)
+        RiviumSyncLogger.i("listenDocument: Subscribing to document MQTT topic: \(topic)")
 
         // Initial fetch
         Task {
@@ -398,10 +486,10 @@ internal class SyncCollectionImpl: SyncCollection {
                 }
             } catch {
                 RiviumSyncLogger.e("Failed to fetch initial document", error: error)
+                DispatchQueue.main.async { onError(error) }
             }
         }
 
-        // Subscribe to MQTT changes on the collection topic, filtering by documentId
         let handle = mqttManager.subscribe(topic: topic) { [self] payload in
             guard let data = payload.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -409,7 +497,7 @@ internal class SyncCollectionImpl: SyncCollection {
                 return
             }
 
-            // Filter: only process messages for our specific document
+            // Only messages for our document.
             guard let msgDocId = json["documentId"] as? String, msgDocId == documentId else {
                 return
             }
@@ -450,13 +538,11 @@ internal class SyncCollectionImpl: SyncCollection {
                     updatedAt: docUpdatedAt,
                     version: version
                 )
-                RiviumSyncLogger.i("listenDocument: Created document from MQTT data: id=\(doc.id), version=\(doc.version)")
                 DispatchQueue.main.async {
                     callback(doc)
                 }
             } else {
                 // Fallback to refetch if no data in message
-                RiviumSyncLogger.i("listenDocument: No data in MQTT message, refetching from API")
                 Task {
                     do {
                         let document = try await self.get(documentId: documentId)
@@ -477,7 +563,7 @@ internal class SyncCollectionImpl: SyncCollection {
 }
 
 /// Implementation of ListenerRegistration
-private class ListenerRegistrationImpl: ListenerRegistration {
+internal class ListenerRegistrationImpl: ListenerRegistration {
     private let onRemove: () -> Void
     
     init(onRemove: @escaping () -> Void) {
@@ -549,8 +635,36 @@ internal class SyncQueryImpl: SyncQuery {
     }
     
     func listen(callback: @escaping ([SyncDocument]) -> Void) -> ListenerRegistration {
+        listen(callback: callback, onError: { error in
+            RiviumSyncLogger.e("Query listener error", error: error)
+        })
+    }
+
+    /// What this query listens to.
+    var listenSpec: ListenSpec {
+        ListenSpec(
+            databaseId: databaseId, collectionId: collectionId, documentId: nil,
+            filters: params.filters, orderByField: params.orderByField, orderDirection: params.orderDirection,
+            limit: params.limitCount, offset: params.offsetCount
+        )
+    }
+
+    func listen(callback: @escaping ([SyncDocument]) -> Void, onError: @escaping (Error) -> Void) -> ListenerRegistration {
+        let listener = ServerListener(
+            spec: listenSpec,
+            transport: apiClient,
+            topics: mqttManager,
+            onDocuments: callback,
+            onError: onError,
+            fallback: { [self] in self.topicListen(callback: callback, onError: onError) }
+        )
+        return SyncCollectionImpl.run(listener, registry: mqttManager.serverListeners)
+    }
+
+    /// Topic listening, for Sync APIs without server-routed listeners: the query runs again on every change.
+    func topicListen(callback: @escaping ([SyncDocument]) -> Void, onError: @escaping (Error) -> Void) -> ListenerRegistration {
         let topic = mqttManager.collectionTopic(databaseId: databaseId, collectionId: collectionId)
-        
+
         // Initial fetch with query
         Task {
             do {
@@ -560,9 +674,10 @@ internal class SyncQueryImpl: SyncQuery {
                 }
             } catch {
                 RiviumSyncLogger.e("Failed to fetch initial query results", error: error)
+                DispatchQueue.main.async { onError(error) }
             }
         }
-        
+
         // Subscribe to MQTT changes and re-run query
         // Note: We capture self strongly here because the query instance needs to stay alive
         // for the lifetime of the subscription. The ListenerRegistration will unsubscribe when removed.

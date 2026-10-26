@@ -14,6 +14,9 @@ public struct CachedDocument {
     public var retryCount: Int
     public var lastError: String?
     public var localUpdatedAt: Int64
+    /// For a write queued by `set()`: whether it merges (`true`) or replaces (`false`). nil for writes queued by
+    /// `add()` / `update()`, and for anything queued by an SDK before 0.3.0 (those are sent as before).
+    public var setMerge: Bool?
 
     public init(
         id: String,
@@ -27,7 +30,8 @@ public struct CachedDocument {
         baseVersion: Int? = nil,
         retryCount: Int = 0,
         lastError: String? = nil,
-        localUpdatedAt: Int64? = nil
+        localUpdatedAt: Int64? = nil,
+        setMerge: Bool? = nil
     ) {
         self.id = id
         self.databaseId = databaseId
@@ -41,6 +45,7 @@ public struct CachedDocument {
         self.retryCount = retryCount
         self.lastError = lastError
         self.localUpdatedAt = localUpdatedAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+        self.setMerge = setMerge
     }
 
     /// Convert to SyncDocument
@@ -60,7 +65,8 @@ public struct CachedDocument {
         databaseId: String,
         collectionId: String,
         syncStatus: SyncStatus,
-        baseVersion: Int? = nil
+        baseVersion: Int? = nil,
+        setMerge: Bool? = nil
     ) -> CachedDocument {
         return CachedDocument(
             id: doc.id,
@@ -71,7 +77,8 @@ public struct CachedDocument {
             updatedAt: Int64(doc.updatedAt),
             version: doc.version,
             syncStatus: syncStatus,
-            baseVersion: baseVersion
+            baseVersion: baseVersion,
+            setMerge: setMerge
         )
     }
 
@@ -85,7 +92,7 @@ public struct CachedDocument {
 extension CachedDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case id, databaseId, collectionId, data, createdAt, updatedAt
-        case version, syncStatus, baseVersion, retryCount, lastError, localUpdatedAt
+        case version, syncStatus, baseVersion, retryCount, lastError, localUpdatedAt, setMerge
     }
 
     public init(from decoder: Decoder) throws {
@@ -102,6 +109,8 @@ extension CachedDocument: Codable {
         retryCount = try container.decode(Int.self, forKey: .retryCount)
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         localUpdatedAt = try container.decode(Int64.self, forKey: .localUpdatedAt)
+        // Absent in documents queued before 0.3.0.
+        setMerge = try container.decodeIfPresent(Bool.self, forKey: .setMerge)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -118,5 +127,6 @@ extension CachedDocument: Codable {
         try container.encode(retryCount, forKey: .retryCount)
         try container.encodeIfPresent(lastError, forKey: .lastError)
         try container.encode(localUpdatedAt, forKey: .localUpdatedAt)
+        try container.encodeIfPresent(setMerge, forKey: .setMerge)
     }
 }

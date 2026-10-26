@@ -188,14 +188,22 @@ struct RealtimeView: View {
 
         // Start the MQTT-based listener (works when MQTT is connected)
         let col = collection
-        _ = col.listen { docs in
+        listener?.remove()
+        listener = AppConfig.mine(col).listen(callback: { docs in
             processDocChanges(docs)
-        }
+        }, onError: { error in
+            // Refused (queryNotAllowed) or no longer allowed (listenerRevoked): it has stopped.
+            DispatchQueue.main.async {
+                listener = nil
+                isListening = false
+                addEvent("info", "Listener stopped: \(error.localizedDescription)")
+            }
+        })
 
         // Initial fetch
         Task {
             do {
-                let docs = try await col.getAll()
+                let docs = try await AppConfig.mine(col).get()
                 await MainActor.run {
                     previousDocs = docs
                     addEvent("info", "Loaded \(docs.count) documents")
@@ -267,6 +275,7 @@ struct RealtimeView: View {
             do {
                 let doc = try await collection.add(data: [
                     "title": "Realtime Test \(Int.random(in: 100...999))",
+                    "userId": AppConfig.userId,
                     "completed": false,
                     "createdAt": ISO8601DateFormatter().string(from: Date())
                 ])
@@ -280,7 +289,7 @@ struct RealtimeView: View {
     private func testUpdate() {
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 let syncedDocs = docs.filter { !$0.id.hasPrefix("local_") }
                 guard let doc = syncedDocs.first else {
                     await MainActor.run { resultText = "No documents to update" }
@@ -300,7 +309,7 @@ struct RealtimeView: View {
     private func testDelete() {
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 let syncedDocs = docs.filter { !$0.id.hasPrefix("local_") }
                 guard let doc = syncedDocs.last else {
                     await MainActor.run { resultText = "No documents to delete" }

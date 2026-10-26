@@ -99,6 +99,7 @@ struct CrudView: View {
             do {
                 let doc = try await collection.add(data: [
                     "title": docTitle,
+                    "userId": AppConfig.userId,
                     "description": docDesc,
                     "completed": false,
                     "createdAt": ISO8601DateFormatter().string(from: Date())
@@ -117,7 +118,7 @@ struct CrudView: View {
         isLoading = true
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 await MainActor.run {
                     documents = docs.filter { !$0.id.hasPrefix("local_") }
                     isLoading = false

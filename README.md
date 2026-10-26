@@ -16,14 +16,14 @@ Realtime database SDK for iOS with offline-first sync.
    ```
    https://github.com/Rivium-co/rivium-sync-ios-sdk
    ```
-3. Select version **0.2.6**
+3. Select version **0.3.0**
 4. Add **RiviumSync** library to your target
 
 ### Swift Package Manager (Package.swift)
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/Rivium-co/rivium-sync-ios-sdk", from: "0.2.6"),
+    .package(url: "https://github.com/Rivium-co/rivium-sync-ios-sdk", from: "0.3.0"),
 ]
 ```
 
@@ -41,7 +41,7 @@ Then add `"RiviumSync"` to your target's dependencies:
 Add to your `Podfile`:
 
 ```ruby
-pod 'RiviumSync', '~> 0.2'
+pod 'RiviumSync', '~> 0.3'
 ```
 
 Then run:
@@ -68,6 +68,57 @@ let listener = todos.listen { documents in
 Realtime updates are published per database name and collection name, so
 `listen` only receives changes when you pass names. Passing a UUID still works
 for REST calls but live updates never arrive.
+
+### Writing a document
+
+`set` writes the document with that id and replaces what was there:
+
+```swift
+try await todos.set(documentId: "todo-1", data: ["title": "Buy milk", "completed": false])
+```
+
+To change only some fields and keep the others, pass `merge: true`:
+
+```swift
+try await todos.set(documentId: "todo-1", data: ["completed": true], merge: true)
+```
+
+### Listening
+
+A listener first receives the current data, then every change:
+
+```swift
+let listener = todos.listenDocument(documentId: "todo-1") { doc in
+    print(doc?.getString("title") ?? "deleted")
+}
+
+let open = todos.where("completed", .equal, false).listen { documents in
+    print("Open todos: \(documents.count)")
+}
+
+listener.remove()
+```
+
+Listeners are checked by your security rules. Add `onError` to hear when a
+listener can't start or is stopped:
+
+```swift
+let listener = todos.where("ownerId", .equal, userId).listen { documents in
+    print(documents.count)
+} onError: { error in
+    if let error = error as? RiviumSyncError, error.code == "query_not_allowed" {
+        print("Add a filter on: \(error.fields)")
+    }
+}
+```
+
+- `RiviumSyncError.queryNotAllowed` (code `query_not_allowed`): the rules
+  don't allow this query. Rules are not filters - filter on the fields named
+  in `fields` so every result is one the user may read. `get()` on a query
+  throws the same error.
+- `RiviumSyncError.listenerRevoked` (code `listener_revoked`): the listener
+  was stopped because the rules no longer allow it (for example, the user was
+  removed from a team). It is not restarted.
 
 ## Verified user identity
 

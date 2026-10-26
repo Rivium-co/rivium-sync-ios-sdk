@@ -99,6 +99,7 @@ struct BatchView: View {
                 for i in 1...3 {
                     batch.create(collection, data: [
                         "title": "Batch Task \(i)",
+                        "userId": AppConfig.userId,
                         "completed": false,
                         "createdAt": ISO8601DateFormatter().string(from: Date())
                     ])
@@ -121,7 +122,7 @@ struct BatchView: View {
         isRunning = true
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 let syncedDocs = docs.filter { !$0.id.hasPrefix("local_") }
                 guard !syncedDocs.isEmpty else {
                     await MainActor.run {
@@ -156,7 +157,7 @@ struct BatchView: View {
         isRunning = true
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 let completed = docs.filter {
                     !$0.id.hasPrefix("local_") && ($0.data["completed"]?.value as? Bool ?? false)
                 }
@@ -190,7 +191,7 @@ struct BatchView: View {
         isRunning = true
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 let syncedDocs = docs.filter { !$0.id.hasPrefix("local_") }
 
                 let batch = RiviumSync.shared.batch()
@@ -198,6 +199,7 @@ struct BatchView: View {
                 // Create one
                 batch.create(collection, data: [
                     "title": "Mixed Batch New",
+                    "userId": AppConfig.userId,
                     "completed": false,
                     "createdAt": ISO8601DateFormatter().string(from: Date())
                 ])

@@ -21,7 +21,7 @@ final class OfflineWriteBeforeConnectTests: XCTestCase {
             return SyncDocument(id: "server-1", data: data)
         }
 
-        override func setDocument(databaseId: String, collectionId: String, documentId: String, data: [String: Any]) async throws -> SyncDocument {
+        override func setDocument(databaseId: String, collectionId: String, documentId: String, data: [String: Any], merge: Bool) async throws -> SyncDocument {
             calls.append("set")
             return SyncDocument(id: documentId, data: data)
         }

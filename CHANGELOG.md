@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.3.0
+
+- **Breaking:** `set()` now replaces the document: fields you leave out are
+  removed (before, `set()` merged). To keep the old behaviour, pass
+  `merge: true`: `collection.set(documentId: id, data: data, merge: true)`.
+  The same applies to `WriteBatch.set(_:documentId:data:merge:)`. Writes
+  queued offline keep the meaning they were made with.
+- With offline persistence on, the cache now stands in only when the server
+  cannot be reached (no network, timeouts, 5xx). When the
+  server refuses a request (your security rules, invalid data), the error is
+  thrown: `getAll()` and `get(documentId:)` no longer answer from the cache,
+  and `add`, `set`, `update` and `delete` no longer queue the write to retry
+  later. Deleting a document that is already gone succeeds.
+- A write made offline that the server refuses when it is sent is dropped,
+  and the local copy goes back to the server's (a refused new document
+  disappears) instead of staying on the device and being returned by reads.
+  `SyncEngine.SyncListener.onDocumentRejected(documentId:operation:error:)`
+  reports it (optional, with an empty default).
+- After `disconnect()`, writes are queued at once, and
+  `RiviumSyncDelegate.riviumSync(_:didDisconnectWithError:)` is called at
+  once. Before, a write made right after `disconnect()` could still go to the
+  server, and the delegate was not told, so apps kept showing "connected".
+- `RiviumSyncError.statusCode`: the HTTP status the server answered with (for
+  example 403 when your security rules refused the request), nil when it
+  could not be reached. Also set for a refused `WriteBatch.commit()`:
+  `batchWriteError` now carries the server's answer as a second value
+  (optional, so existing code compiles).
+- Listeners are now checked by your security rules like a read or a query,
+  and only receive the changes the signed-in user may read. They follow the
+  user: after sign-in, sign-out or a switch to another user they start again
+  for that user. Requires the current Sync API; with an older one the SDK
+  listens as before.
+- New listener variants with an error callback:
+  `listen(callback:onError:)`, `listenDocument(documentId:callback:onError:)`
+  and `SyncQuery.listen(callback:onError:)`.
+- New typed errors: `RiviumSyncError.queryNotAllowed(message, fields:)`
+  (code `query_not_allowed`) when the security rules do not allow a query or
+  query listener - add a filter on the fields named in `fields` - and
+  `RiviumSyncError.listenerRevoked` (code `listener_revoked`) when a listener
+  is stopped because the rules no longer allow it. `RiviumSyncError` has new
+  `code` and `fields` properties. If you `switch` over `RiviumSyncError`
+  without a `default`, add the two new cases.
+- `listenDocument` now receives only its own document's changes, not every
+  change in the collection.
+- A `set()` made offline for a new document keeps its id when it is sent.
+- Realtime came back after a dropped connection only while its connection
+  token was valid (24 hours): later, every reconnect was refused and realtime
+  stayed down until the app restarted. A refused login now fetches a fresh
+  token and connects again.
+- A write made offline that could not be sent (no network, server error) is
+  retried until it goes through. Before, it was given up after
+  3 attempts and stayed on the device unsent, and a queued delete that failed
+  this way was later sent as an update, so the document was not deleted.
+- `maxSyncRetries(_:)` is deprecated and has no effect: writes are retried until they go through, and refused ones are
+  rolled back.
+
 ## 0.2.6
 
 - With offline persistence on, `get()` returns nil only when the document

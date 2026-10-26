@@ -47,14 +47,16 @@ public class LocalStorageManager {
         databaseId: String,
         collectionId: String,
         syncStatus: SyncStatus,
-        baseVersion: Int? = nil
+        baseVersion: Int? = nil,
+        setMerge: Bool? = nil
     ) {
         let cached = CachedDocument.fromSyncDocument(
             document,
             databaseId: databaseId,
             collectionId: collectionId,
             syncStatus: syncStatus,
-            baseVersion: baseVersion
+            baseVersion: baseVersion,
+            setMerge: setMerge
         )
 
         cacheLock.lock()
@@ -138,6 +140,28 @@ public class LocalStorageManager {
         if !stale.isEmpty {
             RiviumSyncLogger.d("LocalStorage: Dropped \(stale.count) documents deleted on the server")
         }
+    }
+
+    /// What a listener received from the server: `saved` documents are written and `removed` ones dropped, but
+    /// only where the local copy has no change waiting to be sent (or there is none), and never an older version.
+    internal func applyServerChanges(saved: [SyncDocument], removed: [String], databaseId: String, collectionId: String) {
+        cacheLock.lock()
+        for doc in saved {
+            if let cached = documentCache[doc.id], cached.syncStatus != .synced || cached.version > doc.version { continue }
+            let cached = CachedDocument.fromSyncDocument(doc, databaseId: databaseId, collectionId: collectionId, syncStatus: .synced)
+            documentCache[doc.id] = cached
+            persistDocument(cached)
+        }
+        for id in removed {
+            guard let cached = documentCache[id], cached.syncStatus == .synced,
+                  cached.databaseId == databaseId, cached.collectionId == collectionId else { continue }
+            documentCache.removeValue(forKey: id)
+            try? fileManager.removeItem(at: documentsDirectory.appendingPathComponent("\(id).json"))
+        }
+        cacheLock.unlock()
+
+        notifyCollectionChange(databaseId: databaseId, collectionId: collectionId)
+        updatePendingCount()
     }
 
     /// Get a document from local cache

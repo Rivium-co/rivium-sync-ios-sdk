@@ -35,7 +35,7 @@ public class RiviumSync {
     public private(set) static var shared: RiviumSync!
 
     /// SDK version
-    public static let version = "0.2.6"
+    public static let version = "0.3.0"
 
     private let config: RiviumSyncConfig
     internal let apiClient: ApiClient
@@ -166,6 +166,12 @@ public class RiviumSync {
     /// Disconnect from realtime sync service
     public func disconnect() {
         mqttManager.disconnect()
+        // Offline from now on, not when the socket reports closing later: a write made right after disconnect() is
+        // queued (as on Android), never sent.
+        syncEngine?.onConnectionStateChanged(connected: false)
+        // Tell the app now (as on Android): the closed socket is released at once and never reports closing, so
+        // without this the app kept showing "connected" after disconnect().
+        delegate?.riviumSync(self, didDisconnectWithError: nil)
         RiviumSyncLogger.i("RiviumSync disconnected")
     }
     

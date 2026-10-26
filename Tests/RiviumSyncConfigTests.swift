@@ -297,4 +297,29 @@ final class RiviumSyncConfigTests: XCTestCase {
 
         XCTAssertEqual(config.mqttServerUri, "mqtts://mqtt-sync.rivium.co:8885")
     }
+
+    // MARK: - useEmulator (a local server, like Firebase)
+
+    func testUseEmulatorPointsTheApiAndRealtimeAtTheLocalServerWithoutTls() {
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123").useEmulator(host: "localhost").build()
+
+        XCTAssertEqual(config.apiUrl, "http://localhost:3006")
+        XCTAssertEqual(config.mqttServerUri, "mqtt://localhost:1884")
+        XCTAssertEqual(config.emulatorHost, "localhost")
+    }
+
+    func testUseEmulatorTakesAnotherApiPort() {
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123").useEmulator(host: "192.168.1.20", port: 4000).build()
+
+        XCTAssertEqual(config.apiUrl, "http://192.168.1.20:4000")
+        XCTAssertEqual(config.mqttHost, "192.168.1.20")
+    }
+
+    func testWithoutUseEmulatorNothingIsLocal() {
+        let config = RiviumSyncConfigBuilder(apiKey: "rv_live_abc123").build()
+
+        XCTAssertNil(config.emulatorHost)
+        XCTAssertEqual(config.apiUrl, "https://sync.rivium.co")
+        XCTAssertTrue(config.mqttUseTls)
+    }
 }

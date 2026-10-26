@@ -4,33 +4,46 @@ import Combine
 
 struct ContentView: View {
     @StateObject private var connectionManager = ConnectionManager()
+    // `-runRulesChecks` opens the Rules tab, which then runs its checks.
+    @State private var tab = ProcessInfo.processInfo.arguments.contains("-runRulesChecks") ? 5 : 0
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             CrudView()
                 .tabItem {
                     Label("CRUD", systemImage: "doc.text")
                 }
+                .tag(0)
 
             QueryView()
                 .tabItem {
                     Label("Query", systemImage: "magnifyingglass")
                 }
+                .tag(1)
 
             BatchView()
                 .tabItem {
                     Label("Batch", systemImage: "square.stack.3d.up")
                 }
+                .tag(2)
 
             RealtimeView()
                 .tabItem {
                     Label("Realtime", systemImage: "bolt.fill")
                 }
+                .tag(3)
 
             OfflineView(connectionManager: connectionManager)
                 .tabItem {
                     Label("Offline", systemImage: "icloud.and.arrow.up")
                 }
+                .tag(4)
+
+            RulesView()
+                .tabItem {
+                    Label("Rules", systemImage: "checkmark.shield")
+                }
+                .tag(5)
         }
         .accentColor(.green)
         .safeAreaInset(edge: .top) {

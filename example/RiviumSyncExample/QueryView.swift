@@ -171,7 +171,7 @@ struct QueryView: View {
         isLoading = true
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 await MainActor.run {
                     results = docs.filter { !$0.id.hasPrefix("local_") }
                     resultText = "Found \(results.count) documents"

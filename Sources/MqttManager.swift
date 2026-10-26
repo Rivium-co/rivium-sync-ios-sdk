@@ -11,8 +11,9 @@ internal class MqttManager {
     /// Maps topic -> [handleId -> callback]
     private var subscriptions: [String: [UUID: (String) -> Void]] = [:]
     private let subscriptionsQueue = DispatchQueue(label: "co.rivium.subscriptions")
-    /// Stable clientId per instance — prevents orphaned sessions on reconnect
-    private let clientId: String = "rivium_sync_\(UUID().uuidString.prefix(8))"
+    /// Stable clientId per instance — prevents orphaned sessions on reconnect. Server-routed listeners are bound to
+    /// it: only this connection may receive their private topics.
+    let clientId: String = "rivium_sync_\(UUID().uuidString.prefix(8))"
 
     /// Track which topics we've already called stream() for on the current PNSocket.
     /// PNSocket keeps its own messageListeners and activeChannels across reconnects,
@@ -36,6 +37,10 @@ internal class MqttManager {
     /// Where the next connectWithToken connects (set with the token it got); guarded by the lock.
     private var nextEndpoint: MqttEndpoint?
     private var tokenRetryTask: Task<Void, Never>?
+    /// Logins refused in a row (`isLoginRefused`): each one fetches a fresh token and connects again, backing off so
+    /// a user the server really refuses is not retried in a tight loop. Reset once connected.
+    var loginRefusals = 0
+    private var loginRetryTask: Task<Void, Never>?
     private static let tokenRetryBaseSeconds: Double = 2
     private static let tokenRetryMaxSeconds: Double = 30
 
@@ -59,6 +64,9 @@ internal class MqttManager {
 
     weak var delegate: MqttManagerDelegate?
 
+    /// Running server-routed listeners: started again when the connection is back or the user changes.
+    let serverListeners = ServerListenerRegistry()
+
     /// Callback for connection state changes
     var onConnectionStateChanged: ((Bool) -> Void)?
 
@@ -80,6 +88,7 @@ internal class MqttManager {
         self.apiClient = apiClient
         apiClient.userTokens.onUserMayHaveChanged = { [weak self] in
             self?.userMayHaveChanged()
+            self?.notifyListenersOfUser()
         }
     }
 
@@ -137,7 +146,14 @@ internal class MqttManager {
                 // The server says where to connect; only a valid encrypted rivium.co endpoint is used, else the
                 // built-in encrypted one. Never plain.
                 let configured = MqttEndpoint(host: self.config.mqttHost, port: self.config.mqttPort, useTls: self.config.mqttUseTls)
-                let endpoint = MqttEndpoint.resolve(host: tokenResponse.mqtt?.host, port: tokenResponse.mqtt?.port, useTls: tokenResponse.mqtt?.useTls, default: configured)
+                // A local server (useEmulator): its host, the realtime port it reports, no TLS.
+                let endpoint: MqttEndpoint
+                if let host = self.config.emulatorHost {
+                    let port = tokenResponse.mqtt?.port.flatMap { (1...65535).contains($0) ? $0 : nil } ?? self.config.mqttPort
+                    endpoint = MqttEndpoint(host: host, port: port, useTls: false)
+                } else {
+                    endpoint = MqttEndpoint.resolve(host: tokenResponse.mqtt?.host, port: tokenResponse.mqtt?.port, useTls: tokenResponse.mqtt?.useTls, default: configured)
+                }
                 self.locked { self.nextEndpoint = endpoint }
                 self.connectWithToken(token: tokenResponse.token, completion: completion)
             } catch {
@@ -238,6 +254,16 @@ internal class MqttManager {
         }
     }
 
+    /// Listeners are bound to the user that started them: a new user (or none) starts them again.
+    private func notifyListenersOfUser() {
+        let registry = serverListeners
+        let tokens = apiClient.userTokens
+        Task {
+            let user = UserTokenStore.user(of: await tokens.current())
+            registry.userMayHaveChanged(user)
+        }
+    }
+
     private func scheduleTokenRetry() {
         guard config.autoReconnect, wantConnected else { return }
         let delay = min(
@@ -249,6 +275,40 @@ internal class MqttManager {
         tokenRetryTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self = self, !Task.isCancelled, self.wantConnected else { return }
+            self.connectInternal(completion: { _ in })
+        }
+    }
+
+    /// The broker refused the realtime login. The PN socket reconnects with the token it was opened with, so once
+    /// that token expired (24 h by default) every reconnect was refused for good and realtime stayed down until the
+    /// app restarted. PNProtocol 0.2.1 reports it as a rejected connection, later versions as `authFailed`.
+    static func isLoginRefused(_ error: PNError) -> Bool {
+        if error.code == .authFailed { return true }
+        guard error.code == .connectionFailed, error.message.hasPrefix("Connection rejected:") else { return false }
+        return error.message.contains("notAuthorized") || error.message.contains("badUsernameOrPassword")
+    }
+
+    /// Close the socket (stopping its retries with the old token) and connect again with a fresh token.
+    func renewLogin() {
+        let delay: Double? = locked {
+            guard wantConnected, loginRetryTask == nil else { return nil }
+            let delay = min(Self.tokenRetryBaseSeconds * pow(2, Double(min(loginRefusals, 4))), Self.tokenRetryMaxSeconds)
+            loginRefusals += 1
+            return delay
+        }
+        guard let delay = delay else { return }
+        RiviumSyncLogger.w("Realtime login refused; reconnecting with a fresh token in \(delay)s")
+        loginRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self = self else { return }
+            self.loginRetryTask = nil
+            guard !Task.isCancelled, self.wantConnected else { return }
+            self.locked { self.socketOpened = false }
+            // Keep `subscriptions`: they are subscribed again on connect.
+            self.socket?.close()
+            self.socket = nil
+            self.hasSubscribedOnce = false
+            self.pnListeners.removeAll()
             self.connectInternal(completion: { _ in })
         }
     }
@@ -306,6 +366,9 @@ internal class MqttManager {
         // asked for it to close.
         wantConnected = false
         cancelTokenRetry()
+        loginRetryTask?.cancel()
+        loginRetryTask = nil
+        loginRefusals = 0
         locked {
             attempt += 1
             fetchingToken = false
@@ -492,6 +555,7 @@ private class ConnectionHandler: PNConnectionListener {
     func onConnected() {
         guard let manager = manager else { return }
         RiviumSyncLogger.i("PN connected, hasSubscribedOnce=\(manager.hasSubscribedOnce)")
+        manager.loginRefusals = 0
 
         if !manager.hasSubscribedOnce {
             manager.subscribePendingTopics()
@@ -502,6 +566,7 @@ private class ConnectionHandler: PNConnectionListener {
 
         manager.onConnectionStateChanged?(true)
         manager.delegate?.mqttManagerDidConnect(manager)
+        manager.serverListeners.connected()
         completion?(.success(()))
         completion = nil
     }
@@ -531,5 +596,7 @@ private class ErrorHandler: PNErrorListener {
 
     func onError(_ error: PNError) {
         RiviumSyncLogger.e("PN error: code=\(error.code), message=\(error.message)")
+        // The socket would keep retrying with its expired token: get a fresh one instead.
+        if MqttManager.isLoginRefused(error) { manager?.renewLogin() }
     }
 }

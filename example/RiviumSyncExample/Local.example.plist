@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Copy to Local.plist (not checked in) and fill in. serverSecret and emulatorHost are read by debug builds only. -->
+<plist version="1.0">
+<dict>
+	<key>apiKey</key>
+	<string>rv_live_your_api_key</string>
+	<key>databaseName</key>
+	<string>my-app</string>
+	<key>serverSecret</key>
+	<string></string>
+	<key>demoUserId</key>
+	<string>ios-demo-user</string>
+	<key>emulatorHost</key>
+	<string></string>
+</dict>
+</plist>

@@ -135,6 +135,7 @@ struct OfflineView: View {
             do {
                 let doc = try await collection.add(data: [
                     "title": "Offline Test \(Int.random(in: 100...999))",
+                    "userId": AppConfig.userId,
                     "isConnected": connectionManager.isConnected,
                     "createdAt": ISO8601DateFormatter().string(from: Date())
                 ])
@@ -151,7 +152,7 @@ struct OfflineView: View {
     private func readDocuments() {
         Task {
             do {
-                let docs = try await collection.getAll()
+                let docs = try await AppConfig.mine(collection).get()
                 let preview = docs.prefix(5).map { doc -> String in
                     let title = doc.data["title"]?.value as? String ?? "untitled"
                     let prefix = doc.id.hasPrefix("local_") ? "[local] " : ""

@@ -197,6 +197,8 @@ final class RiviumSyncErrorTests: XCTestCase {
             .invalidResponse(""),
             .batchWriteError(""),
             .transactionError(""),
+            .queryNotAllowed("", fields: []),
+            .listenerRevoked(""),
             .unknown(nil)
         ]
 
@@ -227,6 +229,10 @@ final class RiviumSyncErrorTests: XCTestCase {
                 description = "batchWriteError"
             case .transactionError:
                 description = "transactionError"
+            case .queryNotAllowed:
+                description = "queryNotAllowed"
+            case .listenerRevoked:
+                description = "listenerRevoked"
             case .unknown:
                 description = "unknown"
             }

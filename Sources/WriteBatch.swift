@@ -32,20 +32,21 @@ public class WriteBatch {
 
     /// Represents a single operation in the batch
     internal enum BatchOperation {
-        case set(databaseId: String, collectionId: String, documentId: String, data: [String: Any])
+        case set(databaseId: String, collectionId: String, documentId: String, data: [String: Any], merge: Bool)
         case update(databaseId: String, collectionId: String, documentId: String, data: [String: Any])
         case delete(databaseId: String, collectionId: String, documentId: String)
         case create(databaseId: String, collectionId: String, data: [String: Any])
 
         func toDict() -> [String: Any] {
             switch self {
-            case .set(let databaseId, let collectionId, let documentId, let data):
+            case .set(let databaseId, let collectionId, let documentId, let data, let merge):
                 return [
                     "type": "set",
                     "databaseId": databaseId,
                     "collectionId": collectionId,
                     "documentId": documentId,
-                    "data": data
+                    "data": data,
+                    "merge": merge
                 ]
             case .update(let databaseId, let collectionId, let documentId, let data):
                 return [
@@ -73,21 +74,28 @@ public class WriteBatch {
         }
     }
 
+    /// The operations as they are sent.
+    internal var operationDicts: [[String: Any]] {
+        operations.map { $0.toDict() }
+    }
+
     internal init(apiClient: ApiClient) {
         self.apiClient = apiClient
     }
 
     /// Writes to the document referred to by the provided collection and document ID.
     /// If the document does not exist yet, it will be created.
-    /// If the document exists, its contents will be overwritten.
+    /// If the document exists, it is replaced by `data` (fields left out are removed), unless `merge` is true:
+    /// then only the fields in `data` are written and the others are kept.
     ///
     /// - Parameters:
     ///   - collection: The collection containing the document
     ///   - documentId: The ID of the document to write
     ///   - data: The data to write to the document
+    ///   - merge: false (the default) replaces the document; true merges `data` into it
     /// - Returns: This WriteBatch instance for chaining
     @discardableResult
-    public func set(_ collection: SyncCollection, documentId: String, data: [String: Any]) -> WriteBatch {
+    public func set(_ collection: SyncCollection, documentId: String, data: [String: Any], merge: Bool = false) -> WriteBatch {
         guard !committed else {
             fatalError("WriteBatch has already been committed")
         }
@@ -95,7 +103,8 @@ public class WriteBatch {
             databaseId: collection.databaseId,
             collectionId: collection.id,
             documentId: documentId,
-            data: data
+            data: data,
+            merge: merge
         ))
         return self
     }
@@ -177,7 +186,7 @@ public class WriteBatch {
             try await apiClient.executeBatch(operations: operations.map { $0.toDict() })
         } catch {
             committed = false // Allow retry
-            throw RiviumSyncError.batchWriteError("Batch commit failed: \(error.localizedDescription)")
+            throw RiviumSyncError.batchWriteError("Batch commit failed: \(error.localizedDescription)", error)
         }
     }
 

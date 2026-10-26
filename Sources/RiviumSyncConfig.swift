@@ -12,10 +12,12 @@ public struct RiviumSyncConfig {
     /// Rivium's endpoints, fixed in the SDK: HTTPS for the API, MQTT over TLS for realtime. Apps can't change them,
     /// so nothing is ever sent unencrypted. The Sync API may move realtime to another encrypted rivium.co endpoint
     /// (see MqttEndpoint).
-    internal let apiUrl: String
-    internal let mqttHost: String
-    internal let mqttPort: Int
-    internal let mqttUseTls: Bool
+    internal private(set) var apiUrl: String
+    internal private(set) var mqttHost: String
+    internal private(set) var mqttPort: Int
+    internal private(set) var mqttUseTls: Bool
+    /// Set by `RiviumSyncConfigBuilder.useEmulator`: a local Rivium Sync server instead of Rivium's.
+    internal private(set) var emulatorHost: String?
     public let debugMode: Bool
     public let autoReconnect: Bool
     public let reconnectInterval: TimeInterval
@@ -42,6 +44,9 @@ public struct RiviumSyncConfig {
     private static let defaultMqttHost = "mqtt-sync.rivium.co"
     private static let defaultMqttPort = 8885
     private static let defaultMqttUseTls = true
+    /// A local Rivium Sync server's API port and realtime port (`useEmulator`).
+    internal static let defaultEmulatorPort = 3006
+    internal static let defaultEmulatorMqttPort = 1884
     private static let defaultOfflineCacheSizeMb = 100
     private static let defaultMaxSyncRetries = 3
 
@@ -87,6 +92,16 @@ public struct RiviumSyncConfig {
         self.wrapperSdkVersion = wrapperSdkVersion
     }
 
+    /// Point this config at a local server: the API over plain HTTP at `host:port`, realtime on the same host
+    /// without TLS. See `RiviumSyncConfigBuilder.useEmulator`.
+    internal mutating func useEmulator(host: String, port: Int) {
+        emulatorHost = host
+        apiUrl = "http://\(host):\(port)"
+        mqttHost = host
+        mqttPort = Self.defaultEmulatorMqttPort
+        mqttUseTls = false
+    }
+
     /// Value of the `X-Rivium-SDK` header: `ios/<version>`, or the wrapper's
     /// identity first with this native SDK underneath.
     internal var sdkHeaderValue: String {
@@ -118,6 +133,8 @@ public class RiviumSyncConfigBuilder {
     private var maxSyncRetries: Int?
     private var wrapperSdkName: String?
     private var wrapperSdkVersion: String?
+    private var emulatorHost: String?
+    private var emulatorPort: Int = RiviumSyncConfig.defaultEmulatorPort
 
     public init(apiKey: String) {
         self.apiKey = apiKey
@@ -203,9 +220,23 @@ public class RiviumSyncConfigBuilder {
         return self
     }
 
-    /// Set maximum number of sync retries
+    /// No longer limits anything: as in Firestore, a write that could not be sent (no network, server error) is
+    /// retried until it goes through, and one the server refuses is rolled back
+    /// (`SyncEngine.SyncListener.onDocumentRejected`). Kept so existing code compiles.
+    @available(*, deprecated, message: "Writes are retried until they go through; refused ones are rolled back. This has no effect.")
     public func maxSyncRetries(_ retries: Int) -> Self {
         self.maxSyncRetries = retries
+        return self
+    }
+
+    /// For Rivium's own SDK tests; apps don't use this.
+    public func useEmulator(host: String, port: Int = 3006) -> Self {
+        let trimmed = host.trimmingCharacters(in: .whitespaces)
+        precondition(!trimmed.isEmpty && !trimmed.contains("/") && !trimmed.contains(":"),
+                     "host is a host name or IP address, without scheme or port")
+        precondition((1...65535).contains(port), "port must be 1-65535")
+        self.emulatorHost = trimmed
+        self.emulatorPort = port
         return self
     }
 
@@ -219,7 +250,7 @@ public class RiviumSyncConfigBuilder {
     }
 
     public func build() -> RiviumSyncConfig {
-        return RiviumSyncConfig(
+        var config = RiviumSyncConfig(
             apiKey: apiKey,
             userId: userId,
             userToken: userToken,
@@ -237,5 +268,9 @@ public class RiviumSyncConfigBuilder {
             wrapperSdkName: wrapperSdkName,
             wrapperSdkVersion: wrapperSdkVersion
         )
+        if let host = emulatorHost {
+            config.useEmulator(host: host, port: emulatorPort)
+        }
+        return config
     }
 }
