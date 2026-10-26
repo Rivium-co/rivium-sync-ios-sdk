@@ -3,7 +3,7 @@ import XCTest
 
 /// With offline persistence on, get() returns nil only when the document does not exist. When the server can't be
 /// reached (or refuses) and the document is not cached, the error is thrown - before, get() returned nil, so apps
-/// showed "not found" for a document that existed (ScanLeap on an unstable network, 2026-10-22).
+/// showed "not found" for a document that existed (on an unstable network).
 final class OfflineGetErrorTests: XCTestCase {
 
     private final class FakeApiClient: ApiClient {
