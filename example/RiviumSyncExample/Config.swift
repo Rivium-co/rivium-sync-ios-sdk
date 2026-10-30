@@ -10,7 +10,6 @@ import RiviumSync
 ///   when you address the database by name.
 /// - `serverSecret` (debug builds only): lets `DemoTokenMinter` stand in for your backend and sign user tokens.
 /// - `demoUserId`: the user the demo signs in as (default `ios-demo-user`).
-/// - `emulatorHost` (debug builds only): a Rivium Sync server on your Mac, e.g. `localhost` from the Simulator.
 enum AppConfig {
     private static let local: [String: Any] = {
         guard let url = Bundle.main.url(forResource: "Local", withExtension: "plist"),

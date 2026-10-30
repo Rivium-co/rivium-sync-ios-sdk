@@ -20,7 +20,7 @@
 	<string>1</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<!-- Plain HTTP to a Rivium Sync server on this Mac (emulatorHost in Local.plist). Rivium's own servers are HTTPS. -->
+		<!-- Plain HTTP to hosts on the local network only; Rivium's servers are HTTPS. -->
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
